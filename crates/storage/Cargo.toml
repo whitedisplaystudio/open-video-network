@@ -1,0 +1,18 @@
+[package]
+name = "ovn-storage"
+description = "Cache policy over the block store: limits, pinning and eviction"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ovn-content = { workspace = true }
+ovn-database = { workspace = true }
+ovn-protocol = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

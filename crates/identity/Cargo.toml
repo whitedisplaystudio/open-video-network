@@ -1,0 +1,17 @@
+[package]
+name = "ovn-identity"
+description = "Ed25519 identity and signature primitives for the Open Video Network"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+libp2p-identity = { workspace = true }
+thiserror = { workspace = true }
+data-encoding = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

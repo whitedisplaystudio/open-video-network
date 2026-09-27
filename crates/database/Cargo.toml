@@ -1,0 +1,19 @@
+[package]
+name = "ovn-database"
+description = "Local SQLite state: peers, discovered videos, cache accounting and local-only viewing data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ovn-protocol = { workspace = true }
+ovn-identity = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,36 @@
+[package]
+name = "ovn-node"
+description = "The node: wiring, event handling and the local HTTP API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ovn-protocol = { workspace = true }
+ovn-identity = { workspace = true }
+ovn-network = { workspace = true }
+ovn-content = { workspace = true }
+ovn-database = { workspace = true }
+ovn-discovery = { workspace = true }
+ovn-storage = { workspace = true }
+ovn-recommendation = { workspace = true }
+
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+directories = { workspace = true }
+futures = { workspace = true }
+libp2p = { workspace = true }
+data-encoding = { workspace = true }
+getrandom = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }

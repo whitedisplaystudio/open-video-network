@@ -1,0 +1,17 @@
+[package]
+name = "ovn-recommendation"
+description = "On-device tag-based recommendation. No data leaves the machine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ovn-database = { workspace = true }
+ovn-protocol = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+ovn-identity = { workspace = true }

@@ -1,0 +1,68 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/identity",
+    "crates/network",
+    "crates/content",
+    "crates/discovery",
+    "crates/storage",
+    "crates/recommendation",
+    "crates/database",
+    "crates/node",
+    "apps/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/openvideonetwork/openvideonetwork"
+
+[workspace.dependencies]
+ovn-protocol = { path = "crates/protocol", version = "0.1.0" }
+ovn-identity = { path = "crates/identity", version = "0.1.0" }
+ovn-network = { path = "crates/network", version = "0.1.0" }
+ovn-content = { path = "crates/content", version = "0.1.0" }
+ovn-discovery = { path = "crates/discovery", version = "0.1.0" }
+ovn-storage = { path = "crates/storage", version = "0.1.0" }
+ovn-recommendation = { path = "crates/recommendation", version = "0.1.0" }
+ovn-database = { path = "crates/database", version = "0.1.0" }
+ovn-node = { path = "crates/node", version = "0.1.0" }
+
+anyhow = "1.0"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+ciborium = "0.2"
+ciborium-io = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "signal"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+libp2p = { version = "0.57", features = [
+    "tokio", "tcp", "quic", "dns", "noise", "yamux",
+    "gossipsub", "kad", "mdns", "identify", "ping",
+    "request-response", "cbor", "macros", "ed25519",
+] }
+libp2p-identity = { version = "0.3", features = ["ed25519", "peerid", "rand"] }
+cid = "0.11"
+multihash = "0.19"
+sha2 = "0.11"
+data-encoding = "2"
+hex = "0.4"
+getrandom = "0.3"
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+clap = { version = "4", features = ["derive", "env"] }
+axum = "0.8"
+tower = "0.5"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots", "http2", "charset", "json"] }
+directories = "6"
+tempfile = "3"
+url = "2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
