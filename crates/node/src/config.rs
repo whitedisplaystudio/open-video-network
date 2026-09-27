@@ -91,6 +91,12 @@ impl NodeConfig {
     pub fn downloads_dir(&self) -> PathBuf {
         self.data_dir.join("downloads")
     }
+
+    /// Where a browser upload is staged before it is chunked into the block
+    /// store. Emptied as soon as the publish finishes.
+    pub fn uploads_dir(&self) -> PathBuf {
+        self.data_dir.join("uploads")
+    }
 }
 
 impl Default for NodeConfig {

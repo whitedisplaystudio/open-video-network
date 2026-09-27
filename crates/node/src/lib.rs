@@ -18,6 +18,8 @@ mod config;
 mod dto;
 mod events;
 mod node;
+mod progress;
+mod range;
 
 use std::net::SocketAddr;
 
@@ -27,8 +29,10 @@ use ovn_database::Database;
 use ovn_identity::Identity;
 
 pub use config::{NodeConfig, RuntimeInfo, DEFAULT_API_PORT};
-pub use node::{AddPeerReport, FetchReport, Node, NodeStatus, PublishReport};
+pub use node::{AddPeerReport, FetchReport, Node, NodeStatus, PublishReport, StreamPlan};
 pub use ovn_network::DEFAULT_P2P_PORT;
+pub use progress::NodeEvent;
+pub use range::{parse_range, ByteRange, RangeError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum NodeError {
@@ -125,6 +129,9 @@ impl RunningNode {
 
     /// Stop everything and wait for the tasks to finish.
     pub async fn shutdown(self) {
+        // Let any attached UI close its event stream before the API stops
+        // accepting, so the usual case needs no forced disconnect.
+        self.node.notify_shutdown();
         if let Some(api) = self.api {
             api.shutdown().await;
         }

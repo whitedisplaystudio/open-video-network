@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ourvideo</title>
+<link rel="stylesheet" href="/assets/app.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="#/home"><span class="brand-mark">▶</span> ourvideo</a>
+
+  <nav class="nav">
+    <button type="button" data-page="home">For you</button>
+    <button type="button" data-page="browse">Browse</button>
+    <button type="button" data-page="library">Library</button>
+  </nav>
+
+  <span class="spacer"></span>
+
+  <form class="searchbar" id="search-form" role="search">
+    <label class="sr-only" for="search-input">Search discovered videos</label>
+    <input id="search-input" type="search" placeholder="Search — stays on this device" autocomplete="off">
+  </form>
+
+  <span class="badge" id="connection" title="Connection to the network">
+    <span class="dot"></span><span id="connection-text">…</span>
+  </span>
+  <a class="badge" href="/admin" title="Node administration">Admin</a>
+</header>
+
+<main>
+  <!-- For you -->
+  <section class="page" data-page="home">
+    <div class="page-head"><h1>For you</h1></div>
+    <p class="lede">
+      Ranked on this device, from what you have watched here.
+      Nothing about your viewing has been sent anywhere.
+    </p>
+    <div id="feed" class="grid"></div>
+
+    <h2 id="recent-heading">Recently announced</h2>
+    <div id="recent" class="grid"></div>
+  </section>
+
+  <!-- Browse -->
+  <section class="page" data-page="browse" hidden>
+    <div class="page-head"><h1>Browse</h1></div>
+    <p class="lede">Everything this node has heard about, newest first.</p>
+    <div id="browse" class="grid"></div>
+  </section>
+
+  <!-- Library -->
+  <section class="page" data-page="library" hidden>
+    <div class="page-head"><h1>Library</h1></div>
+    <p class="lede">Videos whose data this node holds — yours, and anything you have fetched.</p>
+    <div id="library" class="grid"></div>
+  </section>
+
+  <!-- Search -->
+  <section class="page" data-page="search" hidden>
+    <div class="page-head"><h1>Search</h1><span class="badge" id="search-count"></span></div>
+    <p class="lede">Searched locally with SQLite full-text search. The query never left this machine.</p>
+    <div id="results" class="grid"></div>
+  </section>
+
+  <!-- Watch -->
+  <section class="page" data-page="watch" hidden>
+    <div class="player-wrap"><video id="player" controls playsinline preload="metadata"></video></div>
+
+    <div class="watch-head">
+      <h1 id="watch-title">…</h1>
+      <div class="row">
+        <button type="button" id="like" class="small">Like</button>
+        <button type="button" id="follow" class="small">Follow creator</button>
+        <button type="button" id="download" class="small">Save a copy</button>
+        <button type="button" id="block" class="small danger">Hide</button>
+      </div>
+    </div>
+
+    <div class="row" id="watch-meta"></div>
+    <div class="tags" id="watch-tags"></div>
+    <p id="watch-description"></p>
+
+    <div class="cols-2">
+      <div class="card">
+        <h2>Why you are seeing this</h2>
+        <ul class="plain why" id="why"></ul>
+      </div>
+      <div class="card">
+        <h2>Content</h2>
+        <dl class="kv" id="watch-details"></dl>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toasts"></div>
+<script type="module" src="/assets/viewer.js"></script>
+</body>
+</html>

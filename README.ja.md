@@ -57,6 +57,16 @@ cargo build --release
 
 起動すると共有リンクが表示されます。そのリンクがあれば誰でもあなたに接続できます。
 
+### 画面を開く
+
+```bash
+ourvideo ui            # 視聴者用
+ourvideo ui --admin    # 管理用
+```
+
+どちらも Node 自身が loopback で配信します。別の Web サーバーもビルド手順も
+JavaScript のツールチェーンも不要で、`cargo build` だけで完結します。
+
 ### ネットワークに参加する
 
 別のターミナルで:
@@ -76,6 +86,7 @@ ourvideo peer add https://video.example.jp  # または URL
 ourvideo video publish holiday.mp4 --title "旅行" --tag travel --tag family
 ourvideo video list
 ourvideo video get <CID>          # P2P で取得して再生可能なファイルを保存
+                                  # （UI ではダウンロードせずストリーミング再生します）
 ourvideo search 旅行               # ローカル検索。クエリは端末から出ません
 ourvideo watch <CID> --seconds 120 --completed
 ourvideo recommendation list      # あなた専用のフィード（端末内で計算）
@@ -92,6 +103,7 @@ ourvideo recommendation explain <CID>   # なぜその順位なのか
 | `ourvideo status` | Peer・動画・キャッシュ・待ち受けアドレス |
 | `ourvideo stop` | Node を停止 |
 | `ourvideo share-link` | 自分に接続してもらうためのリンク |
+| `ourvideo ui [--admin]` | Web 画面をブラウザで開く |
 | `ourvideo peer list` / `add` / `remove` | Peer の一覧・追加・削除 |
 | `ourvideo video publish <FILE>` | Chunk 分割・CID 化・署名・Announcement |
 | `ourvideo video list [--local]` | 発見済み動画 / 自分が投稿した動画 |
@@ -135,15 +147,45 @@ node.db         SQLite。Peer・発見した動画・キャッシュ管理、
                 そして端末から出ない視聴データ
 blocks/         コンテンツ。1 Block 1 ファイル、ファイル名は Content ID
 downloads/      `video get` の既定の書き出し先
+uploads/        ブラウザからのアップロードの一時置き場。Chunk 化後すぐ削除されます
 runtime.json    CLI が起動中の Node を見つけるための情報（API トークンを含むため 0600）
 ```
+
+---
+
+## Web 画面
+
+Node が2つのページを配信します。どちらも CLI と同じ Local API を使うクライアントです。
+`ourvideo ui` で開くと、トークンが一度だけ `HttpOnly` / `SameSite=Strict` の Cookie に
+交換されます（ブラウザは `<video src>` や `EventSource` に Authorization ヘッダを
+付けられないためです）。
+
+**視聴者用 `/ui`** — 端末内で計算したフィード、ブラウズ、ローカル検索、そして
+**ストリーミング再生**。プレイヤーが要求した分だけ Chunk を Peer から取得するので、
+全部ダウンロードし終わる前に再生が始まります。`Range` に対応しているのでシークもできます。
+各レコメンドは「なぜこの順位なのか」の内訳を展開できます。
+
+**管理用 `/admin`** — ステータス、Peer 一覧とリンクからの参加、動画の公開
+（ファイルはディスクへストリーミングしてから Chunk 化するので、メモリには載りません）、
+ストレージとキャッシュ、ローカル Moderation、そして端末が記録しているあなたのデータの
+表示と消去。
+
+両方ともイベントストリームから進捗をリアルタイム表示します（Peer の増減、
+Announcement の到着、ダウンロードの進捗バー）。
+
+ページは厳格な `Content-Security-Policy` の下で配信され、この Node 以外からは
+何も読み込みません。また `Host` が loopback 名でないリクエストは拒否するので、
+DNS rebinding も塞いでいます。
+
+サムネイルは FFmpeg があれば生成し、通常のコンテンツ Block として保存・P2P 配信します。
+FFmpeg が無い場合はサムネイルが付かないだけで、公開は成功します。
 
 ---
 
 ## 開発
 
 ```bash
-cargo test --workspace      # 234 テスト（受け入れテスト A〜H を含む）
+cargo test --workspace      # 273 テスト（受け入れテスト A〜H を含む）
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
@@ -181,7 +223,8 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools
 * **動画の永続性は保証しません。** Creator がオフラインで、どの Peer の
   キャッシュからも消えた動画は失われます（Persistent Node / NAS Node は V1.5 候補）。
 * **Transcoding と Adaptive Streaming はありません。** 投稿された元ファイルを配信します。
-* **`video get` はダウンロード後に再生します。** ストリーミング再生は未実装です。
+* **画質の切り替え（Adaptive Bitrate）はありません。** 元ファイルをそのまま
+  ストリーミングするため、回線が細いと解像度が下がるのではなくバッファリングします。
 * **Moderation はローカルのみです。** 署名付き Moderation List は V1.5 候補です。
 * **NAT traversal は基本的なものだけです。** Relay や Hole punching はまだありません。
 

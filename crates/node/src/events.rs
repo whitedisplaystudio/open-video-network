@@ -12,6 +12,7 @@ use ovn_protocol::{
 };
 
 use crate::node::Node;
+use crate::progress::NodeEvent;
 
 /// What happened to an inbound announcement. Returned so the behaviour can be
 /// tested without a network.
@@ -66,9 +67,12 @@ async fn handle(node: &Node, event: NetworkEvent) {
                 tracing::warn!(error = %e, "could not record a connection");
             }
             tracing::info!(peer = %id, "connected");
+            node.emit(NodeEvent::PeerConnected { peer_id: id });
         }
         NetworkEvent::PeerDisconnected(peer) => {
-            tracing::info!(peer = %peer.to_base58(), "disconnected");
+            let id = peer.to_base58();
+            tracing::info!(peer = %id, "disconnected");
+            node.emit(NodeEvent::PeerDisconnected { peer_id: id });
         }
         NetworkEvent::GossipAnnouncement { from, data } => match ingest_announcement(node, &data) {
             Ingest::Stored => {}
@@ -131,6 +135,10 @@ pub(crate) fn ingest_announcement(node: &Node, data: &[u8]) -> Ingest {
     }) {
         Ok(true) => {
             tracing::info!(cid = %announcement.video_cid, title = %announcement.title, "discovered a video");
+            node.emit(NodeEvent::VideoDiscovered {
+                cid: announcement.video_cid.to_string(),
+                title: announcement.title.clone(),
+            });
             Ingest::Stored
         }
         Ok(false) => Ingest::Duplicate,

@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use futures::StreamExt;
 use libp2p::Multiaddr;
 
-use ovn_content::{probe_duration_secs, BlockStore, VideoManifest};
+use ovn_content::{
+    extract_thumbnail, looks_like_jpeg, probe_duration_secs, BlockStore, VideoManifest,
+};
 use ovn_database::{
     CacheSummary, Database, PeerRecord, PeerSource, VideoRecord, VideoUpsert, WatchEvent,
 };
@@ -21,6 +23,8 @@ use ovn_recommendation::{Engine, PreferenceModel, Recommendation};
 use ovn_storage::{EvictionReport, Storage};
 
 use crate::config::{NodeConfig, RuntimeInfo};
+use crate::progress::{EventBus, NodeEvent};
+use crate::range::ByteRange;
 use crate::{NodeError, Result};
 
 /// How many chunk transfers run at once. Enough to hide the round trip
@@ -41,6 +45,8 @@ pub(crate) struct Inner {
     pub api_token: String,
     /// Addresses the swarm is actually listening on, as they are reported.
     pub listen_addrs: Mutex<Vec<Multiaddr>>,
+    /// Live progress for anything watching the local event stream.
+    pub events: EventBus,
 }
 
 /// A handle to a running node. Cheap to clone.
@@ -77,6 +83,18 @@ pub struct FetchReport {
     pub bytes_fetched: u64,
     pub providers_tried: usize,
     pub eviction: EvictionReport,
+}
+
+/// Everything a streaming response needs, resolved before the first byte is
+/// written.
+#[derive(Clone, Debug)]
+pub struct StreamPlan {
+    pub cid: ContentId,
+    pub manifest: VideoManifest,
+    pub media_type: String,
+    pub total_size: u64,
+    /// Peers to ask for chunks we do not hold. Empty when we hold them all.
+    pub providers: Vec<PeerId>,
 }
 
 /// The result of `peer add`.
@@ -141,6 +159,21 @@ impl Node {
 
     pub fn api_token(&self) -> &str {
         &self.inner.api_token
+    }
+
+    /// Live events: peers coming and going, videos discovered, fetch
+    /// progress. Nothing here describes viewing behaviour.
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<NodeEvent> {
+        self.inner.events.subscribe()
+    }
+
+    pub(crate) fn emit(&self, event: NodeEvent) {
+        self.inner.events.emit(event);
+    }
+
+    /// Tell every event-stream listener that this node is going away.
+    pub fn notify_shutdown(&self) {
+        self.inner.events.emit(NodeEvent::ShuttingDown);
     }
 
     /// A signed description of how to reach this node.
@@ -338,8 +371,17 @@ impl Node {
         if !path.is_file() {
             return Err(NodeError::NoSuchFile(path.display().to_string()));
         }
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.emit(NodeEvent::PublishStarted {
+            file_name: file_name.clone(),
+        });
+
         let imported = self.inner.storage.import_and_pin(path)?;
         let duration_secs = probe_duration_secs(path).unwrap_or(0);
+        let thumbnail_cid = self.make_thumbnail(path);
         let title = title.unwrap_or_else(|| {
             path.file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -353,7 +395,7 @@ impl Node {
                 description,
                 tags,
                 duration_secs,
-                thumbnail_cid: None,
+                thumbnail_cid,
             },
             &self.inner.identity,
         )?;
@@ -392,6 +434,10 @@ impl Node {
             .db
             .video(&imported.content_id)?
             .ok_or(NodeError::NotFound)?;
+        self.emit(NodeEvent::PublishCompleted {
+            cid: video.cid.clone(),
+            title: video.title.clone(),
+        });
         Ok(PublishReport {
             video,
             chunks: imported.manifest.chunks.len(),
@@ -428,9 +474,30 @@ impl Node {
 
         let missing = self.inner.storage.store().missing_chunks(&manifest);
         let already_held = manifest.chunks.len() - missing.len();
+        self.emit(NodeEvent::FetchStarted {
+            cid: cid.to_string(),
+            total_chunks: manifest.chunks.len(),
+            already_held,
+        });
 
-        let fetched = self.fetch_chunks(&missing, &providers).await?;
+        let fetched = match self
+            .fetch_chunks(cid, &missing, &providers, already_held)
+            .await
+        {
+            Ok(fetched) => fetched,
+            Err(e) => {
+                self.emit(NodeEvent::FetchFailed {
+                    cid: cid.to_string(),
+                    error: e.to_string(),
+                });
+                return Err(e);
+            }
+        };
         let bytes_fetched = fetched.iter().sum::<u64>();
+        self.emit(NodeEvent::FetchCompleted {
+            cid: cid.to_string(),
+            bytes_fetched,
+        });
 
         if self.inner.storage.store().has_all_chunks(&manifest) {
             self.inner.db.set_have_content(&cid, true)?;
@@ -496,11 +563,35 @@ impl Node {
         })
     }
 
-    async fn fetch_chunks(&self, missing: &[ContentId], providers: &[PeerId]) -> Result<Vec<u64>> {
+    async fn fetch_chunks(
+        &self,
+        video: ContentId,
+        missing: &[ContentId],
+        providers: &[PeerId],
+        already_held: usize,
+    ) -> Result<Vec<u64>> {
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+        let total_chunks = already_held + missing.len();
+        let done = AtomicUsize::new(already_held);
+        let bytes = AtomicU64::new(0);
+        let (done, bytes) = (&done, &bytes);
+
         let results: Vec<Result<u64>> = futures::stream::iter(missing.iter().copied())
             .map(|cid| async move {
                 let data = self.fetch_block(cid, providers).await?;
-                Ok(data.len() as u64)
+                let len = data.len() as u64;
+                // Chunks finish out of order, so report a count rather than
+                // an index: a progress bar only needs "how many of how many".
+                let completed = done.fetch_add(1, Ordering::Relaxed) + 1;
+                let so_far = bytes.fetch_add(len, Ordering::Relaxed) + len;
+                self.emit(NodeEvent::FetchProgress {
+                    cid: video.to_string(),
+                    completed_chunks: completed,
+                    total_chunks,
+                    bytes_fetched: so_far,
+                });
+                Ok(len)
             })
             .buffer_unordered(CONCURRENT_CHUNK_FETCHES)
             .collect()
@@ -531,6 +622,147 @@ impl Node {
             Some(bytes) => Ok(Some(VideoManifest::from_bytes(&bytes)?)),
             None => Ok(None),
         }
+    }
+
+    // ---------------------------------------------------------- thumbnails
+
+    /// Generate a thumbnail for a file being published and store it as a
+    /// pinned block. Returns `None` when FFmpeg is unavailable or the file
+    /// has no decodable frame — a publish never fails over a thumbnail.
+    fn make_thumbnail(&self, path: &Path) -> Option<ContentId> {
+        let jpeg = extract_thumbnail(path)?;
+        let cid = self.inner.storage.store().put_raw(&jpeg).ok()?;
+        let _ = self.inner.db.record_cached(&cid, jpeg.len() as u64, true);
+        tracing::debug!(%cid, bytes = jpeg.len(), "generated a thumbnail");
+        Some(cid)
+    }
+
+    /// The thumbnail for a video, fetching it from a peer if we do not hold
+    /// it. Thumbnails are ordinary blocks, so this is the normal transfer
+    /// path with the normal integrity check.
+    ///
+    /// The bytes are checked to actually be a JPEG before being returned: a
+    /// peer can serve whatever hashes correctly, and this is served to a
+    /// browser.
+    pub async fn thumbnail(&self, video: &ContentId) -> Result<Option<Vec<u8>>> {
+        let Some(record) = self.inner.db.video(video)? else {
+            return Ok(None);
+        };
+        let Some(thumbnail_cid) = record.thumbnail_cid else {
+            return Ok(None);
+        };
+        let cid = ContentId::parse(&thumbnail_cid)?;
+
+        let data = match self.inner.storage.try_get(&cid)? {
+            Some(data) => data,
+            None => {
+                let providers = self.providers_for(*video).await?;
+                if providers.is_empty() {
+                    return Ok(None);
+                }
+                match self.fetch_block(cid, &providers).await {
+                    Ok(data) => data,
+                    Err(e) => {
+                        tracing::debug!(%cid, error = %e, "could not fetch a thumbnail");
+                        return Ok(None);
+                    }
+                }
+            }
+        };
+
+        if !looks_like_jpeg(&data) {
+            tracing::warn!(%cid, "a thumbnail block is not a JPEG; refusing to serve it");
+            return Ok(None);
+        }
+        Ok(Some(data))
+    }
+
+    // ----------------------------------------------------------- streaming
+
+    /// Work out what a streaming request needs before any bytes are sent.
+    ///
+    /// The manifest is fetched if we do not have it, so a video can be played
+    /// without being downloaded first.
+    pub async fn prepare_stream(&self, cid: ContentId) -> Result<StreamPlan> {
+        if self.inner.db.is_cid_blocked(&cid)? {
+            return Err(NodeError::Blocked(cid.to_string()));
+        }
+        let manifest = match self.manifest(&cid)? {
+            Some(manifest) => manifest,
+            None => {
+                let providers = self.providers_for(cid).await?;
+                if providers.is_empty() {
+                    return Err(NodeError::NoProviders(cid.to_string()));
+                }
+                let manifest = self.fetch_manifest(cid, &providers).await?;
+                self.inner.db.set_have_manifest(&cid, true)?;
+                manifest
+            }
+        };
+        // Resolved once, then reused for every chunk in the response.
+        let providers = if self.inner.storage.store().has_all_chunks(&manifest) {
+            Vec::new()
+        } else {
+            self.providers_for(cid).await?
+        };
+        Ok(StreamPlan {
+            cid,
+            media_type: manifest.media_type.clone(),
+            total_size: manifest.total_size,
+            manifest,
+            providers,
+        })
+    }
+
+    /// Bytes for one byte range, as a stream.
+    ///
+    /// Chunks are produced in order and fetched on demand, so playback can
+    /// start on the first chunk rather than the last. A chunk that cannot be
+    /// fetched ends the stream with an error, which the player sees as a
+    /// truncated response.
+    pub fn stream_range(
+        &self,
+        plan: StreamPlan,
+        range: ByteRange,
+    ) -> impl futures::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Send {
+        let node = self.clone();
+        let chunk_size = plan.manifest.chunk_size as u64;
+        let indices = range.chunk_indices(chunk_size);
+        let state = (node, plan, range, *indices.start(), *indices.end());
+
+        futures::stream::unfold(state, move |(node, plan, range, index, last)| async move {
+            if index > last {
+                return None;
+            }
+            let chunk_cid = plan.manifest.chunks.get(index).copied()?;
+            let data = match node.block_for_stream(chunk_cid, &plan.providers).await {
+                Ok(data) => data,
+                Err(e) => {
+                    return Some((
+                        Err(std::io::Error::other(e.to_string())),
+                        (node, plan, range, last + 1, last),
+                    ))
+                }
+            };
+
+            // Trim the first and last chunks to the requested range.
+            let chunk_start = index as u64 * chunk_size;
+            let from = range.start.saturating_sub(chunk_start) as usize;
+            let to = ((range.end - chunk_start + 1) as usize).min(data.len());
+            let slice = data.get(from..to).unwrap_or_default().to_vec();
+
+            Some((Ok(slice), (node, plan, range, index + 1, last)))
+        })
+    }
+
+    async fn block_for_stream(&self, cid: ContentId, providers: &[PeerId]) -> Result<Vec<u8>> {
+        if let Some(data) = self.inner.storage.try_get(&cid)? {
+            return Ok(data);
+        }
+        if providers.is_empty() {
+            return Err(NodeError::NoProviders(cid.to_string()));
+        }
+        self.fetch_block(cid, providers).await
     }
 
     // -------------------------------------------------------------- browse
@@ -682,6 +914,7 @@ pub(crate) fn build_inner(
         storage,
         network,
         engine: Engine::default(),
+        events: EventBus::new(),
         started_at: ovn_protocol::now_secs(),
         api_token,
         listen_addrs: Mutex::new(Vec::new()),

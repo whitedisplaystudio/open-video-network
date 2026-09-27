@@ -95,6 +95,31 @@ metadata resistance are not in scope, and section 4 of the design says so. If
 you need to hide the fact that you are on the network at all, this is not yet
 the tool for that.
 
+## The live event stream
+
+The web UI needs to know when a peer arrives or a download progresses, so the
+node broadcasts events on `GET /v1/events`. That channel carries content and
+connection facts only: which video was discovered, how many chunks of a
+download are done. There is no event for a play, a pause, a like or a score,
+and a test enumerates every variant and checks its fields.
+
+## The web interface
+
+Both pages are served by the node on loopback under a `Content-Security-Policy`
+that permits nothing from any other origin — no fonts, no analytics, no CDN.
+There is nothing for them to phone home to.
+
+They authenticate with an `HttpOnly`, `SameSite=Strict` cookie, exchanged
+once from the API token, because a browser cannot put an `Authorization`
+header on a `<video src>` or an `EventSource`. `SameSite=Strict` means
+another site cannot make your browser send it, and the node additionally
+refuses any request whose `Host` is not a loopback name, which closes DNS
+rebinding.
+
+The admin page's privacy panel shows exactly what has been recorded and
+erases it in one click. It reads the same `dto.rs` conversion described
+above — the only place local-only data is serialised at all.
+
 ## The local API
 
 It binds to `127.0.0.1` and nothing else, and every route that can read

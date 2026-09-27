@@ -12,13 +12,18 @@
 
 use std::net::SocketAddr;
 
+use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use tokio::sync::oneshot;
+
+use crate::progress::NodeEvent;
+use crate::range::{parse_range, ByteRange, RangeError};
 
 use ovn_database::WatchEvent;
 use ovn_identity::PublicKey;
@@ -34,10 +39,26 @@ pub(crate) struct ApiServer {
     task: tokio::task::JoinHandle<()>,
 }
 
+/// How long a graceful shutdown waits for connections to drain.
+///
+/// A server-sent-events stream and a video download both stay open for as
+/// long as the client wants them, and `axum`'s graceful shutdown waits for
+/// every in-flight connection. Without a deadline, one open browser tab
+/// would stop the node from ever exiting.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl ApiServer {
     pub async fn shutdown(self) {
         let _ = self.shutdown.send(());
-        let _ = self.task.await;
+        let mut task = self.task;
+        if tokio::time::timeout(SHUTDOWN_GRACE, &mut task)
+            .await
+            .is_err()
+        {
+            tracing::debug!("local API still had open connections; closing them");
+            task.abort();
+            let _ = task.await;
+        }
     }
 }
 
@@ -79,6 +100,13 @@ fn router(node: Node) -> Router {
         .route("/v1/videos/{cid}", get(video_info))
         .route("/v1/videos/{cid}/fetch", post(fetch_video))
         .route("/v1/videos/{cid}/export", post(export_video))
+        .route(
+            "/v1/videos/{cid}/stream",
+            get(stream_video).head(stream_video),
+        )
+        .route("/v1/videos/{cid}/thumbnail", get(video_thumbnail))
+        .route("/v1/upload", post(upload_video))
+        .route("/v1/events", get(event_stream))
         .route("/v1/search", get(search))
         .route("/v1/recommendations", get(recommendations))
         .route("/v1/recommendations/{cid}", get(explain))
@@ -107,8 +135,54 @@ fn router(node: Node) -> Router {
         // Public: this is what a URL hands to a newcomer.
         .route(ovn_protocol::WELL_KNOWN_DESCRIPTOR_PATH, get(descriptor))
         .route("/health", get(health))
+        // The web UI. The pages themselves hold no data — everything they
+        // show comes from /v1, which is authenticated — so they are served
+        // without a token. `/auth` is what turns a token into a cookie.
+        .route("/", get(|| async { Redirect::temporary("/ui") }))
+        .route("/ui", get(viewer_page))
+        .route("/admin", get(admin_page))
+        .route("/assets/app.css", get(asset_css))
+        .route("/assets/common.js", get(asset_common_js))
+        .route("/assets/viewer.js", get(asset_viewer_js))
+        .route("/assets/admin.js", get(asset_admin_js))
+        .route("/auth", get(authenticate))
         .merge(protected)
+        // Applied to everything, including the public routes: a page on
+        // another origin must not be able to drive this node.
+        .layer(axum::middleware::from_fn(require_local_host))
         .with_state(node)
+}
+
+/// Refuse a request whose `Host` is not a loopback name.
+///
+/// The socket is already bound to 127.0.0.1, but that alone does not stop DNS
+/// rebinding: an attacker's domain can be made to resolve here, and then the
+/// browser treats their page as same-origin with this server. Checking the
+/// host they asked for closes that.
+async fn require_local_host(
+    request: Request,
+    next: Next,
+) -> std::result::Result<Response, StatusCode> {
+    let host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    // Strip the port, and the brackets around a literal IPv6 address.
+    let name = host
+        .rsplit_once(':')
+        .filter(|(before, _)| !before.is_empty() && !before.ends_with(']') || before.contains(']'))
+        .map(|(before, _)| before)
+        .unwrap_or(host)
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+
+    if host.is_empty() || matches!(name, "127.0.0.1" | "localhost" | "::1") {
+        Ok(next.run(request).await)
+    } else {
+        tracing::warn!(%host, "refused a request for a non-loopback host name");
+        Err(StatusCode::MISDIRECTED_REQUEST)
+    }
 }
 
 /// Constant-time-ish bearer check. The token is 32 random bytes, so an
@@ -119,20 +193,17 @@ async fn require_token(
     request: Request,
     next: Next,
 ) -> std::result::Result<Response, StatusCode> {
-    let presented = request
-        .headers()
+    // A command line client sends a bearer header; a browser sends the
+    // cookie `/auth` gave it, because a page cannot add headers to a
+    // `<video src>` or an `EventSource`.
+    let headers = request.headers();
+    let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
+        .or_else(|| cookie_token(headers))
         .unwrap_or_default();
-    let expected = node.api_token();
-    if presented.len() == expected.len()
-        && presented
-            .bytes()
-            .zip(expected.bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0
-    {
+    if token_matches(presented, node.api_token()) {
         Ok(next.run(request).await)
     } else {
         Err(StatusCode::UNAUTHORIZED)
@@ -375,6 +446,363 @@ async fn shutdown(State(node): State<Node>) -> ApiResult<StatusCode> {
     Ok(StatusCode::ACCEPTED)
 }
 
+// ------------------------------------------------------------ the web UI
+
+const VIEWER_HTML: &str = include_str!("ui/viewer.html");
+const ADMIN_HTML: &str = include_str!("ui/admin.html");
+const APP_CSS: &str = include_str!("ui/app.css");
+const COMMON_JS: &str = include_str!("ui/common.js");
+const VIEWER_JS: &str = include_str!("ui/viewer.js");
+const ADMIN_JS: &str = include_str!("ui/admin.js");
+
+fn page(html: &'static str) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            // The UI loads nothing from anywhere else, so say so.
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'self'; media-src 'self' blob:; img-src 'self' data:; \
+                 script-src 'self'; style-src 'self'; connect-src 'self'; \
+                 base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            ),
+        ],
+        html,
+    )
+        .into_response()
+}
+
+fn script(body: &'static str) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+async fn viewer_page() -> Response {
+    page(VIEWER_HTML)
+}
+
+async fn admin_page() -> Response {
+    page(ADMIN_HTML)
+}
+
+async fn asset_css() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        APP_CSS,
+    )
+        .into_response()
+}
+
+async fn asset_common_js() -> Response {
+    script(COMMON_JS)
+}
+
+async fn asset_viewer_js() -> Response {
+    script(VIEWER_JS)
+}
+
+async fn asset_admin_js() -> Response {
+    script(ADMIN_JS)
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AuthQuery {
+    token: String,
+    #[serde(default)]
+    next: Option<String>,
+}
+
+/// Exchange the API token for a cookie, once, so the browser can make
+/// authenticated requests afterwards.
+///
+/// A page cannot attach an `Authorization` header to `<video src>`, `<img
+/// src>` or an `EventSource`, so the UI needs a cookie. `SameSite=Strict`
+/// means another site cannot make the browser send it.
+async fn authenticate(State(node): State<Node>, Query(query): Query<AuthQuery>) -> Response {
+    if !token_matches(&query.token, node.api_token()) {
+        return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
+    }
+    // Only a same-origin path, never an absolute or protocol-relative URL.
+    let next = query
+        .next
+        .filter(|n| n.starts_with('/') && !n.starts_with("//"))
+        .unwrap_or_else(|| "/ui".to_string());
+
+    let cookie = format!(
+        "{COOKIE_NAME}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000",
+        node.api_token()
+    );
+    let mut response = Redirect::to(&next).into_response();
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        response.headers_mut().insert(header::SET_COOKIE, value);
+    }
+    response
+}
+
+const COOKIE_NAME: &str = "ovn_token";
+
+fn cookie_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())?
+        .split(';')
+        .find_map(|pair| {
+            let (name, value) = pair.split_once('=')?;
+            (name.trim() == COOKIE_NAME).then(|| value.trim())
+        })
+}
+
+fn token_matches(presented: &str, expected: &str) -> bool {
+    presented.len() == expected.len()
+        && presented
+            .bytes()
+            .zip(expected.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+}
+
+// ----------------------------------------------------------- streaming
+
+/// Media types we will echo back as a `Content-Type`.
+///
+/// The type comes out of a manifest a stranger wrote, and this response is
+/// same-origin with the UI. Handing a browser `text/html` because a peer
+/// asked us to would be a scripting hole, so anything unrecognised is served
+/// as opaque bytes.
+fn safe_media_type(declared: &str) -> &'static str {
+    match declared.trim().to_ascii_lowercase().as_str() {
+        "video/mp4" => "video/mp4",
+        "video/webm" => "video/webm",
+        "video/ogg" => "video/ogg",
+        "video/x-matroska" => "video/x-matroska",
+        "video/quicktime" => "video/quicktime",
+        "audio/mpeg" => "audio/mpeg",
+        "audio/mp4" => "audio/mp4",
+        "audio/ogg" => "audio/ogg",
+        "audio/opus" => "audio/opus",
+        "audio/flac" => "audio/flac",
+        "audio/wav" => "audio/wav",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Serve a video, honouring `Range` so a player can seek, and fetching
+/// chunks from peers as they are needed rather than up front.
+async fn stream_video(
+    State(node): State<Node>,
+    Path(cid): Path<String>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    let cid = parse_cid(&cid)?;
+    let plan = node.prepare_stream(cid).await?;
+    let total = plan.total_size;
+    let media_type = safe_media_type(&plan.media_type);
+
+    let Some(whole) = ByteRange::whole(total) else {
+        return Ok((StatusCode::NO_CONTENT, "").into_response());
+    };
+
+    let requested = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+    let (status, range) = match requested {
+        None => (StatusCode::OK, whole),
+        Some(raw) => match parse_range(raw, total) {
+            Ok(range) => (StatusCode::PARTIAL_CONTENT, range),
+            // Malformed headers are ignored and the whole thing is sent,
+            // which is what RFC 9110 asks for.
+            Err(RangeError::Malformed) => (StatusCode::OK, whole),
+            Err(RangeError::Unsatisfiable) => {
+                return Ok((
+                    StatusCode::RANGE_NOT_SATISFIABLE,
+                    [(header::CONTENT_RANGE, format!("bytes */{total}"))],
+                    "",
+                )
+                    .into_response())
+            }
+        },
+    };
+
+    let mut response_headers = vec![
+        (header::CONTENT_TYPE, media_type.to_string()),
+        (header::ACCEPT_RANGES, "bytes".to_string()),
+        (header::CONTENT_LENGTH, range.byte_count().to_string()),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        (header::CACHE_CONTROL, "no-store".to_string()),
+    ];
+    if status == StatusCode::PARTIAL_CONTENT {
+        response_headers.push((
+            header::CONTENT_RANGE,
+            format!("bytes {}-{}/{total}", range.start, range.end),
+        ));
+    }
+
+    // A HEAD is how a player asks for the length before it asks for bytes.
+    let body = if method == axum::http::Method::HEAD {
+        Body::empty()
+    } else {
+        Body::from_stream(node.stream_range(plan, range))
+    };
+
+    let mut response = Response::new(body);
+    *response.status_mut() = status;
+    for (name, value) in response_headers {
+        if let Ok(value) = HeaderValue::from_str(&value) {
+            response.headers_mut().insert(name, value);
+        }
+    }
+    Ok(response)
+}
+
+/// A video's thumbnail, fetched from a peer if we do not hold it.
+async fn video_thumbnail(State(node): State<Node>, Path(cid): Path<String>) -> ApiResult<Response> {
+    let cid = parse_cid(&cid)?;
+    match node.thumbnail(&cid).await? {
+        Some(jpeg) => Ok((
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+                // Thumbnails are immutable: they are named by their hash.
+                (header::CACHE_CONTROL, "private, max-age=86400"),
+            ],
+            jpeg,
+        )
+            .into_response()),
+        // A JSON body, like every other error here: it tells a client the
+        // difference between "no thumbnail for this video" and "no such
+        // route".
+        None => Err(ApiError(NodeError::NotFound)),
+    }
+}
+
+// -------------------------------------------------------------- uploading
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadQuery {
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    /// Comma separated, because this arrives in a query string.
+    #[serde(default)]
+    tags: Option<String>,
+}
+
+/// Largest upload accepted through the browser.
+const MAX_UPLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+/// Publish a file the browser sent, rather than one already on disk.
+///
+/// The body is streamed straight to a file so that a large video never has
+/// to fit in memory, and the staged copy is removed once it has been chunked
+/// into the block store.
+async fn upload_video(
+    State(node): State<Node>,
+    Query(query): Query<UploadQuery>,
+    body: Body,
+) -> ApiResult<Json<PublishDto>> {
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let file_name = crate::node::sanitise_file_name(query.file_name.as_deref().unwrap_or("upload"));
+    let staging = node.config().uploads_dir();
+    tokio::fs::create_dir_all(&staging)
+        .await
+        .map_err(|e| NodeError::Runtime(format!("creating {}: {e}", staging.display())))?;
+    let staged = staging.join(format!("{}-{}", std::process::id(), file_name));
+
+    let mut written: u64 = 0;
+    {
+        let mut file = tokio::fs::File::create(&staged)
+            .await
+            .map_err(|e| NodeError::Runtime(format!("creating {}: {e}", staged.display())))?;
+        let mut stream = body.into_data_stream();
+        while let Some(part) = stream.next().await {
+            let part = part.map_err(|e| NodeError::Runtime(format!("upload failed: {e}")))?;
+            written += part.len() as u64;
+            if written > MAX_UPLOAD_BYTES {
+                drop(file);
+                let _ = tokio::fs::remove_file(&staged).await;
+                return Err(ApiError(NodeError::Runtime(format!(
+                    "upload exceeds the {MAX_UPLOAD_BYTES} byte limit"
+                ))));
+            }
+            file.write_all(&part)
+                .await
+                .map_err(|e| NodeError::Runtime(format!("writing the upload: {e}")))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| NodeError::Runtime(format!("writing the upload: {e}")))?;
+    }
+    if written == 0 {
+        let _ = tokio::fs::remove_file(&staged).await;
+        return Err(ApiError(NodeError::Content(
+            ovn_content::ContentError::EmptyFile,
+        )));
+    }
+
+    let tags = query
+        .tags
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    let result = node
+        .publish_video(
+            &staged,
+            query.title.filter(|t| !t.trim().is_empty()),
+            query.description.unwrap_or_default(),
+            tags,
+        )
+        .await;
+    // The bytes now live in the block store, so the staged copy is dead
+    // weight either way.
+    let _ = tokio::fs::remove_file(&staged).await;
+    Ok(Json(result?.into()))
+}
+
+// ------------------------------------------------------------ live events
+
+/// Server-sent events: peers, discoveries and download progress.
+async fn event_stream(
+    State(node): State<Node>,
+) -> Sse<impl futures::Stream<Item = std::result::Result<Event, std::convert::Infallible>>> {
+    use futures::StreamExt;
+
+    let stream = tokio_stream::wrappers::BroadcastStream::new(node.subscribe())
+        .filter_map(|result| async move {
+            // A lagging consumer just misses events; it is never an error
+            // worth tearing the stream down for.
+            result.ok()
+        })
+        // Deliver the shutdown notice, then end. Otherwise this connection
+        // would outlive the node it is reporting on.
+        .scan(false, |ended, event: NodeEvent| {
+            let finished = *ended;
+            *ended = matches!(event, NodeEvent::ShuttingDown);
+            async move { (!finished).then_some(event) }
+        })
+        .filter_map(|event| async move { Event::default().json_data(event).ok().map(Ok) });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 // ----------------------------------------------------------------- plumbing
 
 fn parse_cid(text: &str) -> std::result::Result<ContentId, ApiError> {
@@ -407,6 +835,15 @@ impl IntoResponse for ApiError {
             NodeError::NotFound | NodeError::NotFetched(_) => StatusCode::NOT_FOUND,
             NodeError::NoSuchFile(_) | NodeError::Protocol(_) | NodeError::Discovery(_) => {
                 StatusCode::BAD_REQUEST
+            }
+            NodeError::Content(ovn_content::ContentError::EmptyFile)
+            | NodeError::Content(ovn_content::ContentError::ChunkTooLarge { .. })
+            | NodeError::Content(ovn_content::ContentError::MalformedManifest(_)) => {
+                StatusCode::BAD_REQUEST
+            }
+            NodeError::Content(ovn_content::ContentError::Missing { .. }) => StatusCode::NOT_FOUND,
+            NodeError::Content(ovn_content::ContentError::IntegrityFailure { .. }) => {
+                StatusCode::BAD_GATEWAY
             }
             NodeError::InvalidPeerId(_) => StatusCode::BAD_REQUEST,
             NodeError::Blocked(_) => StatusCode::FORBIDDEN,

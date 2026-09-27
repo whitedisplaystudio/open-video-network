@@ -76,6 +76,21 @@ impl Client {
             .await
     }
 
+    /// Base URL of the running node's local API.
+    pub fn base_url(&self) -> &str {
+        &self.base
+    }
+
+    /// A URL that hands the browser a session cookie and then opens `page`.
+    ///
+    /// The token appears once, in a URL on loopback, and is immediately
+    /// exchanged for an `HttpOnly` cookie — a browser cannot attach an
+    /// `Authorization` header to a `<video src>` or an `EventSource`, so a
+    /// cookie is what the UI needs.
+    pub fn ui_url(&self, page: &str) -> String {
+        format!("{}/auth?token={}&next={}", self.base, self.token, page)
+    }
+
     pub async fn delete(&self, path: &str) -> Result<Value> {
         self.send(self.http.delete(format!("{}{path}", self.base)))
             .await

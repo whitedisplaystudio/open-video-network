@@ -106,11 +106,37 @@ Secret keys are written with `0600` permissions and never appear in a
 protocol message, a log line, or a `Debug` rendering — `Identity`'s `Debug`
 impl prints only the public key, and a test asserts the secret is absent.
 
-### The local API
+### The local API and the web UI
 
 Bound to loopback. Bearer token from `runtime.json`, which is `0600`. Token
-comparison is length-checked and constant-time over the bytes. One route is
-unauthenticated by design — the public node descriptor.
+comparison is length-checked and constant-time over the bytes. Browsers
+authenticate with an `HttpOnly`, `SameSite=Strict` cookie exchanged from the
+same token, because a page cannot add a header to a `<video src>` or an
+`EventSource`.
+
+Unauthenticated by design: the public node descriptor, and the two UI pages
+with their assets, which contain no data.
+
+Three further checks matter here, because this server is same-origin with a
+browser page:
+
+* **Host checking.** Every request is refused unless its `Host` is a loopback
+  name. Binding to `127.0.0.1` does not by itself stop DNS rebinding — an
+  attacker's domain can be made to resolve here, and then their page is
+  same-origin with the node. Checking the name they asked for closes that.
+* **A media-type allowlist.** A stream's `Content-Type` comes from a manifest
+  a stranger wrote. Only known video, audio and image types are echoed back;
+  anything else is `application/octet-stream`, with `nosniff`. Otherwise a
+  peer could publish `text/html` and have it run in the UI's origin.
+  Thumbnails are additionally checked to begin and end with JPEG markers.
+* **A strict Content-Security-Policy.** The pages may load nothing from any
+  other origin and may not use inline scripts or styles, so a string that
+  escaped one of the DOM builders still could not execute.
+
+Uploads through the browser are streamed to a staged file rather than
+buffered, capped at 8 GiB, and the staged copy is removed once the content is
+in the block store. The file name is sanitised to a single path component
+before it touches the filesystem.
 
 ### Paths
 

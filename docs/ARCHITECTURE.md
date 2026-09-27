@@ -166,6 +166,57 @@ explained rather than asserted.
 The discovery term is not decoration either: without it the feed converges on
 whatever was watched first and never recovers.
 
+## Streaming
+
+`GET /v1/videos/{cid}/stream` answers `Range` requests, which is what makes a
+browser willing to scrub through a video rather than download it first.
+
+```
+Range: bytes=1048570-2097160
+ └─ resolve the manifest (fetching it if we lack it)
+     └─ work out which chunks the range touches
+         └─ for each, in order:
+             ├─ held locally?  read it
+             └─ otherwise      fetch it from a provider, verify, store
+                 └─ trim the first and last chunk to the requested bytes
+```
+
+The body is a stream, so the first chunk goes out while the second is still
+being fetched. Providers are resolved once, before the response starts,
+rather than per chunk.
+
+The `Content-Type` comes from a manifest a stranger wrote, so it is matched
+against an allowlist of media types; anything unrecognised is served as
+`application/octet-stream` with `nosniff`. Otherwise a peer could publish
+something claiming to be `text/html` and get it executed same-origin with the
+UI.
+
+## Thumbnails
+
+Generated with FFmpeg at 10% of the duration — the start of a video is often
+black — scaled to 640px and stored as an ordinary `raw` block, pinned like
+everything else the node publishes. The id goes in the announcement's
+`thumbnailCid`, so a peer fetches it over the same block protocol as any
+chunk, and it is checked to actually be a JPEG before being handed to a
+browser.
+
+FFmpeg is optional. Without it a video simply has no thumbnail; a publish
+never fails over one.
+
+## Live events
+
+A `tokio::sync::broadcast` in the node, exposed as server-sent events on
+`GET /v1/events`. Peers arriving and leaving, videos discovered, and per-chunk
+download progress.
+
+Nothing on this channel describes viewing behaviour — it is about content and
+connections. The event types are enumerated in `crates/node/src/progress.rs`
+and a test asserts their fields stay within that boundary.
+
+The stream ends when the node emits `shuttingDown`, because a connection that
+never closes would otherwise hold up a graceful shutdown for as long as a
+browser tab stays open.
+
 ## The local API
 
 The CLI is a client. The API is the seam a GUI will use. It binds to loopback
@@ -173,9 +224,36 @@ and requires a bearer token from `runtime.json`, because it can read viewing
 history: loopback keeps the network out, the token keeps other accounts on the
 machine out.
 
-One route is unauthenticated: `/.well-known/ovn/node.json`, the node's signed
-public descriptor. That is what makes "put a reverse proxy in front of it and
-hand out a URL" work.
+Three routes are unauthenticated: `/.well-known/ovn/node.json` (the node's
+signed public descriptor, which is what makes "put a reverse proxy in front
+of it and hand out a URL" work), and the two UI pages with their assets,
+which contain no data of their own.
+
+A browser cannot attach an `Authorization` header to a `<video src>`, an
+`<img src>` or an `EventSource`, so `/auth?token=…` exchanges the token once
+for an `HttpOnly`, `SameSite=Strict` cookie and the middleware accepts
+either. Every request is also rejected unless its `Host` is a loopback name,
+which is what stops a rebound DNS name from making an attacker's page
+same-origin with the node.
+
+## The web UI
+
+Two pages — `/ui` to watch, `/admin` to run the node — served straight from
+the binary with `include_str!`. No bundler, no npm, no build step: `cargo
+build` remains the entire toolchain, which matters for a project whose first
+promise is that one command gets you running.
+
+They share `app.css`, a small token-based design system that follows the
+system light or dark setting, and `common.js`, which holds the API client,
+formatting, a DOM builder that cannot be handed raw HTML, and the event
+stream subscription.
+
+A strict `Content-Security-Policy` allows nothing from any other origin, and
+no inline script or style — so anything dynamic is a CSS custom property set
+from JavaScript rather than a `style` attribute. `crates/node/tests/ui_wiring.rs`
+checks that every element the scripts look up exists in the page and that
+every API path they call is a route the node serves, which is the part a
+compiler would otherwise do.
 
 ## Where to start reading
 

@@ -10,11 +10,13 @@ mod manifest;
 mod merkle;
 mod probe;
 mod store;
+mod thumbnail;
 
 pub use manifest::{ImportedVideo, VideoManifest, MANIFEST_VERSION};
 pub use merkle::{merkle_proof, merkle_root, verify_merkle_proof};
 pub use probe::{guess_media_type, probe_duration_secs};
 pub use store::{BlockStore, StoreStats};
+pub use thumbnail::{extract_thumbnail, looks_like_jpeg, MAX_THUMBNAIL_BYTES, THUMBNAIL_WIDTH};
 
 pub use ovn_protocol::{ContentId, CHUNK_SIZE};
 

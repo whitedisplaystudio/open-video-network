@@ -52,6 +52,8 @@ enum Command {
     Peer(PeerCommand),
     /// A link others can use to reach this node.
     ShareLink,
+    /// Open the web interface in a browser.
+    Ui(UiArgs),
     /// Publish, list and fetch videos.
     #[command(subcommand)]
     Video(VideoCommand),
@@ -83,6 +85,16 @@ enum Command {
         #[arg(long)]
         undo: bool,
     },
+}
+
+#[derive(Args, Debug)]
+struct UiArgs {
+    /// Open the node administration page instead of the viewer.
+    #[arg(long)]
+    admin: bool,
+    /// Print the links instead of opening a browser.
+    #[arg(long)]
+    print: bool,
 }
 
 #[derive(Args, Debug)]
@@ -296,6 +308,12 @@ async fn start(args: StartArgs, data_dir: PathBuf) -> Result<()> {
         Ok(link) => println!("  {link}"),
         Err(e) => println!("  (not available yet: {e})"),
     }
+    if running.api_url().is_some() {
+        println!();
+        println!("Web interface:");
+        println!("  ourvideo ui           watch");
+        println!("  ourvideo ui --admin   manage this node");
+    }
     println!();
     println!("Leave this running. In another terminal:");
     println!("  ourvideo status");
@@ -334,6 +352,25 @@ async fn run_client_command(command: Command, data_dir: PathBuf, as_json: bool) 
         Command::Stop => {
             client.post("/v1/shutdown", json!({})).await?;
             println!("Stopped.");
+            return Ok(());
+        }
+
+        Command::Ui(args) => {
+            let page = if args.admin { "/admin" } else { "/ui" };
+            let url = client.ui_url(page);
+            if args.print {
+                println!("Viewer  {}", client.ui_url("/ui"));
+                println!("Admin   {}", client.ui_url("/admin"));
+                println!();
+                println!("These links carry this node's API token. Keep them to yourself.");
+            } else {
+                println!("Opening {}{page}", client.base_url());
+                if let Err(e) = open_in_browser(&url) {
+                    println!();
+                    println!("Could not open a browser ({e}). Open this yourself:");
+                    println!("  {url}");
+                }
+            }
             return Ok(());
         }
 
@@ -610,6 +647,26 @@ async fn run_client_command(command: Command, data_dir: PathBuf, as_json: bool) 
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         render(&value);
+    }
+    Ok(())
+}
+
+/// Hand a URL to the desktop's browser.
+fn open_in_browser(url: &str) -> Result<()> {
+    let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else if cfg!(target_os = "windows") {
+        ("cmd", &["/C", "start", ""])
+    } else {
+        ("xdg-open", &[])
+    };
+    let status = std::process::Command::new(program)
+        .args(args)
+        .arg(url)
+        .status()
+        .with_context(|| format!("running {program}"))?;
+    if !status.success() {
+        anyhow::bail!("{program} exited with {status}");
     }
     Ok(())
 }

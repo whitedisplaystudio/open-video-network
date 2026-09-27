@@ -64,6 +64,17 @@ anything:
 
 It prints a share link. Anyone with that link can reach you.
 
+### Open the interface
+
+```bash
+ourvideo ui            # the viewer
+ourvideo ui --admin    # the node's own control panel
+```
+
+Both are served by the node itself on loopback. There is no separate web
+server, no build step and no JavaScript toolchain: `cargo build` is the whole
+of it.
+
 ### Join someone else's network
 
 In another terminal:
@@ -83,6 +94,7 @@ stop working without affecting you.
 ourvideo video publish holiday.mp4 --title "Holiday" --tag travel --tag family
 ourvideo video list
 ourvideo video get <CID>          # fetch from the network and save a playable file
+                                  # (the UI streams instead, without downloading first)
 ourvideo search holiday           # searched locally; the query never leaves
 ourvideo watch <CID> --seconds 120 --completed
 ourvideo recommendation list      # your feed, computed here
@@ -99,6 +111,7 @@ ourvideo recommendation explain <CID>
 | `ourvideo status` | Peers, videos, cache, listening addresses. |
 | `ourvideo stop` | Stop the running node. |
 | `ourvideo share-link` | A link others can use to reach you. |
+| `ourvideo ui [--admin] [--print]` | Open the web interface in a browser. |
 | `ourvideo peer list` | Known peers and how you met them. |
 | `ourvideo peer add <URL-or-link>` | Join through a URL, an `ourvideo://` link, or a multiaddr. |
 | `ourvideo peer remove <PEER_ID>` | Forget a peer. |
@@ -172,6 +185,7 @@ node.db         SQLite: peers, discovered videos, cache accounting, and
                 your viewing data, which never leaves this file.
 blocks/         Content, one file per block, named by its content id.
 downloads/      Where `video get` writes playable files by default.
+uploads/        Staging for a browser upload. Emptied as soon as it is chunked.
 runtime.json    How the CLI finds the running node. 0600: it holds the API token.
 ```
 
@@ -199,6 +213,10 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4801/v1/status | jq
 | `GET /v1/videos/{cid}` | One video. |
 | `POST /v1/videos/{cid}/fetch` | Fetch its blocks from the network. |
 | `POST /v1/videos/{cid}/export` | Write a playable file. |
+| `GET`/`HEAD` `/v1/videos/{cid}/stream` | Play it. Honours `Range`; chunks are fetched as the player needs them. |
+| `GET /v1/videos/{cid}/thumbnail` | Its thumbnail, fetched from a peer if needed. |
+| `POST /v1/upload?fileName=…&title=…&tags=…` | Publish a file sent as the request body. |
+| `GET /v1/events` | Server-sent events: peers, discoveries, download progress. |
 | `GET /v1/search?q=…` | Local search. |
 | `GET /v1/recommendations` | Your feed. |
 | `GET /v1/recommendations/{cid}` | Why that score. |
@@ -209,10 +227,45 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4801/v1/status | jq
 | `GET`/`POST`/`DELETE` `/v1/blocked/…` | Local moderation. |
 | `POST /v1/shutdown` | Stop the node. |
 | `GET /.well-known/ovn/node.json` | **Public.** This node's signed descriptor. |
+| `GET /ui` · `GET /admin` | **Public.** The two interfaces. They hold no data. |
+| `GET /auth?token=…&next=…` | Exchange the token for a session cookie. |
 
-That last one is unauthenticated on purpose: it is what turns a URL into a way
-to join. Put a reverse proxy in front of it and `https://your.domain` becomes
-something you can hand to a newcomer.
+`/.well-known/ovn/node.json` is unauthenticated on purpose: it is what turns a
+URL into a way to join. Put a reverse proxy in front of it and
+`https://your.domain` becomes something you can hand to a newcomer.
+
+---
+
+## The web interface
+
+Two pages, both served by the node, both talking to the same local API the
+CLI uses. `ourvideo ui` opens one; the token is exchanged once for an
+`HttpOnly`, `SameSite=Strict` cookie, because a page cannot attach an
+`Authorization` header to a `<video src>` or an `EventSource`.
+
+**The viewer** (`/ui`) is for watching: a feed ranked on this device, browse
+and local search, and a player that **streams** — chunks are fetched from
+peers as the player asks for them, so playback starts on the first chunk
+rather than the last. Seeking works, because the node answers `Range`
+requests. Every recommendation can be expanded into the exact terms that
+produced its score.
+
+**The admin page** (`/admin`) is for running the node: status, peers, joining
+by link, publishing (drag a file in — it is streamed to disk and chunked,
+never held in memory), storage and cache, local moderation, and a panel
+showing everything this device has recorded about you, with a button that
+erases it.
+
+Both pages show live progress from the event stream: peers arriving,
+announcements landing, and a progress bar per download.
+
+The pages are served under a strict `Content-Security-Policy` that allows
+nothing from anywhere but this node, and the node refuses any request whose
+`Host` is not a loopback name, which closes DNS rebinding.
+
+Thumbnails are generated with FFmpeg when it is installed, stored as ordinary
+content blocks, and fetched from peers like anything else. Without FFmpeg,
+videos simply have no thumbnail.
 
 ---
 
@@ -269,7 +322,7 @@ cannot name the types that hold your viewing data. This is
 ## Development
 
 ```bash
-cargo test --workspace      # 234 tests, including the acceptance suite
+cargo test --workspace      # 273 tests, including the acceptance suite
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
@@ -313,7 +366,9 @@ These are deliberate, and listed in the design document rather than hidden:
   V1.5 candidate.
 * **No transcoding and no adaptive streaming.** The original file is what is
   distributed.
-* **`video get` downloads before it plays.** There is no streaming player yet.
+* **No adaptive bitrate.** The web player streams the original file; there is
+  one quality, and a slow connection means buffering rather than a lower
+  resolution.
 * **Moderation is local only.** Signed, shareable moderation lists are a V1.5
   candidate.
 * **NAT traversal is basic.** No relay or hole punching yet.

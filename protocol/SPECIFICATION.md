@@ -146,7 +146,19 @@ last node by combining it with itself, `node(x, x)`. The root of an empty list
 is 32 zero bytes. The leaf and interior prefixes MUST be included: they are
 what prevents an interior hash being presented as a leaf.
 
-### 6.3 Manifest
+### 6.3 Thumbnails
+
+A thumbnail is an ordinary content block: `raw` codec, fetched over the same
+block protocol as any chunk, and named in an announcement's `thumbnailCid`.
+
+* It MUST be a JPEG, and a receiver MUST check the SOI/EOI markers before
+  rendering it. The bytes come from a stranger and are shown to a user.
+* It MUST NOT exceed 524 288 bytes, so it always fits in one chunk.
+* The reference implementation generates one at 10% of the duration, scaled
+  to 640 pixels wide. Neither the offset nor the size is normative: a
+  thumbnail is a hint, and a node that produces none is conformant.
+
+### 6.4 Manifest
 
 A manifest is a CBOR map. Its `dag-cbor` CID over **the exact bytes
 transferred** is the video's identifier; there is no canonicalisation step, so
@@ -407,6 +419,19 @@ the next start.
 
 ---
 
+## 10.4 Note on local interfaces
+
+Nothing in sections 9 and 10 requires a node to expose an HTTP API or a user
+interface to its own operator. The reference implementation does both, on
+loopback, and they are not part of this specification: a conformant node may
+have no interface at all beyond a command line.
+
+The one HTTP surface that *is* specified is the well-known descriptor
+document in section 10.1, because other implementations must be able to read
+it.
+
+---
+
 ## 11. Limits
 
 Every value below is part of the protocol, not local policy. A message that
@@ -431,6 +456,7 @@ exceeds one is invalid, and every implementation rejects it the same way.
 | Video duration | 604 800 seconds |
 | Clock skew into the future | 300 seconds |
 | Chunks per manifest | 65 536 |
+| Thumbnail | 524 288 bytes |
 
 ---
 
