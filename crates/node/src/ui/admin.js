@@ -1,14 +1,25 @@
 // The admin UI: what this node is doing, and the levers for changing it.
 
 import {
-  get, post, del, api, bytes, duration, ago, el, mount, clear, empty,
-  toast, reportError, liveEvents, poll, router, shortId,
+  get, post, del, api, bytes, duration, ago, date, decimal, percent, number,
+  el, mount, empty, toast, reportError, liveEvents, poll, router, shortId,
+  t, languagePicker, whenLocaleChanges,
 } from '/assets/common.js';
 
 const $ = (id) => document.getElementById(id);
 
 /** Download progress, keyed by content id, fed by the event stream. */
 const transfers = new Map();
+
+/** How a peer was found, in words rather than protocol names. */
+const SOURCE_KEYS = {
+  mdns: 'admin.source.mdns',
+  dht: 'admin.source.dht',
+  url: 'admin.source.url',
+  manual: 'admin.source.manual',
+  bootstrap: 'admin.source.bootstrap',
+  connected: 'admin.source.connected',
+};
 
 // --------------------------------------------------------------- overview
 
@@ -24,21 +35,24 @@ async function loadOverview() {
   const status = await get('/v1/status');
 
   mount($('stats'), [
-    stat('Peers', String(status.connectedPeers), `${status.knownPeers} known`),
-    stat('Videos', String(status.knownVideos), `${status.localVideos} published here`),
-    stat('Serving', String(status.providing), 'announced to the DHT'),
-    stat('Cache', bytes(status.cache.totalBytes), `of ${bytes(status.cacheLimitBytes)}`),
-    stat('Uptime', duration(status.uptimeSecs), status.nodeName),
+    stat(t('admin.stat.peers'), number(status.connectedPeers),
+      t('admin.stat.peers.sub', { count: status.knownPeers })),
+    stat(t('admin.stat.videos'), number(status.knownVideos),
+      t('admin.stat.videos.sub', { count: status.localVideos })),
+    stat(t('admin.stat.serving'), number(status.providing), t('admin.stat.serving.sub')),
+    stat(t('admin.stat.cache'), bytes(status.cache.totalBytes),
+      t('admin.stat.cache.sub', { limit: bytes(status.cacheLimitBytes) })),
+    stat(t('admin.stat.uptime'), duration(status.uptimeSecs), status.nodeName),
   ]);
 
   mount($('identity'), [
-    el('dt', { text: 'Peer id' }), el('dd', { class: 'mono', text: status.peerId }),
-    el('dt', { text: 'Public key' }), el('dd', { class: 'mono', text: status.publicKey }),
-    el('dt', { text: 'Data directory' }), el('dd', { class: 'mono', text: status.dataDir }),
-    el('dt', { text: 'Listening on' }),
+    el('dt', { text: t('admin.identity.peerId') }), el('dd', { class: 'mono', text: status.peerId }),
+    el('dt', { text: t('admin.identity.publicKey') }), el('dd', { class: 'mono', text: status.publicKey }),
+    el('dt', { text: t('admin.identity.dataDir') }), el('dd', { class: 'mono', text: status.dataDir }),
+    el('dt', { text: t('admin.identity.listening') }),
     el('dd', {}, status.listenAddrs.length
-      ? status.listenAddrs.map((a) => el('div', { class: 'mono', text: a }))
-      : [el('span', { text: 'nothing yet' })]),
+      ? status.listenAddrs.map((address) => el('div', { class: 'mono', text: address }))
+      : [el('span', { text: t('admin.identity.nothingYet') })]),
   ]);
 
   const used = status.cacheLimitBytes
@@ -46,9 +60,12 @@ async function loadOverview() {
     : 0;
   $('cache-meter').style.setProperty('--value', used.toFixed(1));
   mount($('storage'), [
-    el('dt', { text: 'Held' }), el('dd', { text: `${bytes(status.cache.totalBytes)} in ${status.cache.blockCount} blocks` }),
-    el('dt', { text: 'Pinned' }), el('dd', { text: `${bytes(status.cache.pinnedBytes)} — published here, never evicted` }),
-    el('dt', { text: 'Limit' }), el('dd', { text: `${bytes(status.cacheLimitBytes)} of fetched content` }),
+    el('dt', { text: t('admin.storage.held') }),
+    el('dd', { text: t('admin.storage.heldValue', { bytes: bytes(status.cache.totalBytes), count: status.cache.blockCount }) }),
+    el('dt', { text: t('admin.storage.pinned') }),
+    el('dd', { text: t('admin.storage.pinnedValue', { bytes: bytes(status.cache.pinnedBytes) }) }),
+    el('dt', { text: t('admin.storage.limit') }),
+    el('dd', { text: t('admin.storage.limitValue', { bytes: bytes(status.cacheLimitBytes) }) }),
   ]);
 
   return status;
@@ -60,20 +77,23 @@ async function loadShareLink() {
 }
 
 function renderTransfers() {
-  const rows = [...transfers.values()].map((t) => {
-    const pct = t.total ? Math.round((t.done / t.total) * 100) : 0;
+  const rows = [...transfers.values()].map((transfer) => {
+    const fraction = transfer.total ? transfer.done / transfer.total : 0;
     const meter = el('div', { class: 'meter' }, [el('i')]);
-    meter.style.setProperty('--value', String(pct));
+    meter.style.setProperty('--value', String(Math.round(fraction * 100)));
     return el('div', { class: 'transfer' }, [
       el('div', { class: 'who' }, [
-        el('div', { class: 'n', text: shortId(t.cid, 14, 8) }),
+        el('div', { class: 'n', text: shortId(transfer.cid, 14, 8) }),
         meter,
       ]),
-      el('div', { class: 'pct', text: t.failed ? 'failed' : `${pct}%` }),
-      el('div', { class: 'badge', text: bytes(t.bytes) }),
+      el('div', {
+        class: 'pct',
+        text: transfer.failed ? t('admin.transfers.failed') : percent(fraction),
+      }),
+      el('div', { class: 'badge', text: bytes(transfer.bytes) }),
     ]);
   });
-  mount($('transfers'), rows.length ? rows : empty('↓', 'No transfers in progress'));
+  mount($('transfers'), rows.length ? rows : empty('↓', 'admin.transfers.empty'));
 }
 
 function logLine(text) {
@@ -87,10 +107,10 @@ function logLine(text) {
 
 async function loadPeers() {
   const peers = await get('/v1/peers');
-  $('peer-count').textContent = `${peers.length} known`;
+  $('peer-count').textContent = t('admin.peers.known', { count: peers.length });
 
   if (!peers.length) {
-    mount($('peers'), empty('◇', 'No peers yet', 'Paste a link above, or start another node on this network.'));
+    mount($('peers'), empty('◇', 'admin.peers.empty.title', 'admin.peers.empty.hint'));
     return;
   }
 
@@ -98,18 +118,18 @@ async function loadPeers() {
     el('tr', {}, [
       el('td', { class: 'mono', text: shortId(peer.peerId, 10, 6) }),
       el('td', { text: peer.nodeName || '—' }),
-      el('td', {}, [el('span', { class: 'badge', text: peer.source })]),
+      el('td', {}, [el('span', { class: 'badge', text: t(SOURCE_KEYS[peer.source] ?? 'admin.source.dht') })]),
       el('td', { text: ago(peer.lastSeen) }),
-      el('td', { text: peer.lastConnected ? ago(peer.lastConnected) : 'never' }),
+      el('td', { text: peer.lastConnected ? ago(peer.lastConnected) : t('admin.peers.never') }),
       el('td', { class: 'shrink' }, [
         el('button', {
           class: 'small danger',
           type: 'button',
-          text: 'Forget',
+          text: t('admin.peers.forget'),
           onClick: async () => {
             try {
               await del(`/v1/peers/${peer.peerId}`);
-              toast('Forgotten.');
+              toast(t('admin.peers.forgotten'));
               await loadPeers();
             } catch (error) {
               reportError(error);
@@ -120,10 +140,12 @@ async function loadPeers() {
     ]),
   );
 
+  const headings = [
+    'admin.peers.col.peer', 'admin.peers.col.name', 'admin.peers.col.source',
+    'admin.peers.col.lastSeen', 'admin.peers.col.lastConnected', null,
+  ];
   mount($('peers'), el('table', {}, [
-    el('thead', {}, [
-      el('tr', {}, ['Peer', 'Name', 'Found via', 'Last seen', 'Last connected', ''].map((h) => el('th', { text: h }))),
-    ]),
+    el('thead', {}, [el('tr', {}, headings.map((key) => el('th', { text: key ? t(key) : '' })))]),
     el('tbody', {}, rows),
   ]));
 }
@@ -133,7 +155,7 @@ async function loadPeers() {
 async function loadLocalVideos() {
   const videos = await get('/v1/videos/local');
   if (!videos.length) {
-    mount($('local-videos'), empty('▲', 'Nothing published here yet', 'Pick a file above.'));
+    mount($('local-videos'), empty('▲', 'admin.local.empty.title', 'admin.local.empty.hint'));
     return;
   }
   const rows = videos.map((video) =>
@@ -143,15 +165,19 @@ async function loadLocalVideos() {
         el('div', { class: 'mono', text: shortId(video.cid, 16, 8) }),
       ]),
       el('td', { text: video.durationSecs ? duration(video.durationSecs) : '—' }),
-      el('td', {}, video.tags.map((t) => el('span', { class: 'tag', text: t }))),
-      el('td', { text: new Date(video.createdAt * 1000).toLocaleDateString() }),
+      el('td', {}, video.tags.map((tag) => el('span', { class: 'tag', text: tag }))),
+      el('td', { text: date(video.createdAt) }),
       el('td', { class: 'shrink' }, [
-        el('a', { class: 'badge', href: `/ui#/watch/${video.cid}`, text: 'Watch' }),
+        el('a', { class: 'badge', href: `/ui#/watch/${video.cid}`, text: t('admin.local.watch') }),
       ]),
     ]),
   );
+  const headings = [
+    'admin.local.col.video', 'admin.local.col.length', 'admin.local.col.tags',
+    'admin.local.col.published', null,
+  ];
   mount($('local-videos'), el('table', {}, [
-    el('thead', {}, [el('tr', {}, ['Video', 'Length', 'Tags', 'Published', ''].map((h) => el('th', { text: h })))]),
+    el('thead', {}, [el('tr', {}, headings.map((key) => el('th', { text: key ? t(key) : '' })))]),
     el('tbody', {}, rows),
   ]));
 }
@@ -161,7 +187,7 @@ function wireUpload() {
     const input = $('upload-file');
     const file = input.files?.[0];
     if (!file) {
-      toast('Choose a file first.', 'error');
+      toast(t('admin.publish.noFile'), 'error');
       return;
     }
 
@@ -174,7 +200,7 @@ function wireUpload() {
 
     const button = $('upload-go');
     button.disabled = true;
-    $('upload-state').textContent = 'uploading…';
+    $('upload-state').textContent = t('admin.publish.uploading');
     $('upload-meter').style.setProperty('--value', '5');
 
     try {
@@ -186,19 +212,16 @@ function wireUpload() {
         headers: { 'Content-Type': 'application/octet-stream' },
       });
       $('upload-meter').style.setProperty('--value', '100');
-      $('upload-state').textContent = 'published';
-      toast(
-        result.announcedToNetwork
-          ? `Published "${result.title}" and announced it.`
-          : `Published "${result.title}". No peers are listening yet, so nobody has been told.`,
-      );
+      $('upload-state').textContent = t('admin.publish.published');
+      toast(t(result.announcedToNetwork ? 'admin.publish.done' : 'admin.publish.doneNoPeers',
+        { title: result.title }));
       input.value = '';
       $('upload-title').value = '';
       $('upload-description').value = '';
       $('upload-tags').value = '';
       await Promise.all([loadLocalVideos(), loadOverview()]);
     } catch (error) {
-      $('upload-state').textContent = 'failed';
+      $('upload-state').textContent = t('admin.publish.failed');
       $('upload-meter').style.setProperty('--value', '0');
       reportError(error);
     } finally {
@@ -211,12 +234,12 @@ function wireProfile() {
   $('profile-save').addEventListener('click', async () => {
     const displayName = $('profile-name').value.trim();
     if (!displayName) {
-      toast('A display name is required.', 'error');
+      toast(t('admin.profile.needName'), 'error');
       return;
     }
     try {
       await post('/v1/profile', { displayName, bio: $('profile-bio').value });
-      toast('Profile signed and announced.');
+      toast(t('admin.profile.saved'));
     } catch (error) {
       reportError(error);
     }
@@ -239,14 +262,14 @@ async function loadModeration() {
               ]),
               el('td', { class: 'shrink' }, [
                 el('button', {
-                  class: 'small', type: 'button', text: 'Unblock',
+                  class: 'small', type: 'button', text: t('admin.moderation.unblock'),
                   onClick: () => onRemove(entry.subject),
                 }),
               ]),
             ]),
           )),
         ])
-      : empty('○', 'Nothing blocked');
+      : empty('○', 'admin.moderation.empty');
 
   mount($('blocked-cids'), list(cids, async (cid) => {
     try {
@@ -268,31 +291,20 @@ async function loadModeration() {
 }
 
 function wireModeration() {
-  $('block-cid-go').addEventListener('click', async () => {
-    const cid = $('block-cid').value.trim();
-    if (!cid) return;
+  const block = async (input, path) => {
+    const subject = input.value.trim();
+    if (!subject) return;
     try {
-      await post(`/v1/blocked/cids/${encodeURIComponent(cid)}`, { reason: 'blocked from the admin page' });
-      $('block-cid').value = '';
-      toast('Blocked here. No other node is affected.');
+      await post(`${path}/${encodeURIComponent(subject)}`, { reason: t('admin.moderation.reason') });
+      input.value = '';
+      toast(t('admin.moderation.blocked'));
       await loadModeration();
     } catch (error) {
       reportError(error);
     }
-  });
-
-  $('block-creator-go').addEventListener('click', async () => {
-    const key = $('block-creator').value.trim();
-    if (!key) return;
-    try {
-      await post(`/v1/blocked/creators/${encodeURIComponent(key)}`, { reason: 'blocked from the admin page' });
-      $('block-creator').value = '';
-      toast('Blocked here. No other node is affected.');
-      await loadModeration();
-    } catch (error) {
-      reportError(error);
-    }
-  });
+  };
+  $('block-cid-go').addEventListener('click', () => block($('block-cid'), '/v1/blocked/cids'));
+  $('block-creator-go').addEventListener('click', () => block($('block-creator'), '/v1/blocked/creators'));
 }
 
 // ---------------------------------------------------------------- privacy
@@ -300,50 +312,52 @@ function wireModeration() {
 async function loadPrivacy() {
   const [preferences, history] = await Promise.all([get('/v1/preferences'), get('/v1/watch?limit=40')]);
 
-  mount(
-    $('preferences'),
-    preferences.length
-      ? preferences.map((pref) => {
-          const meter = el('div', { class: 'meter' }, [el('i')]);
-          meter.style.setProperty('--value', String(Math.abs(pref.weight) * 100));
-          return el('div', { class: 'transfer' }, [
-            el('div', { class: 'who' }, [el('div', { class: 'n', text: pref.tag }), meter]),
-            el('div', { class: 'pct', text: pref.weight.toFixed(2) }),
-          ]);
-        })
-      : empty('◌', 'Nothing learned yet', 'Watch a few videos and a tag model appears here.'),
-  );
+  mount($('preferences'), preferences.length
+    ? preferences.map((pref) => {
+        const meter = el('div', { class: 'meter' }, [el('i')]);
+        meter.style.setProperty('--value', String(Math.abs(pref.weight) * 100));
+        return el('div', { class: 'transfer' }, [
+          el('div', { class: 'who' }, [el('div', { class: 'n', text: pref.tag }), meter]),
+          el('div', { class: 'pct', text: decimal(pref.weight, 2) }),
+        ]);
+      })
+    : empty('◌', 'admin.privacy.model.empty.title', 'admin.privacy.model.empty.hint'));
 
   const summary = history.summary;
   mount($('watch-summary'), el('p', {
     class: 'lede',
-    text: `${summary.eventCount} viewing events across ${summary.distinctVideos} videos, ${duration(summary.totalWatchedSecs)} in total.`,
+    text: t('admin.privacy.summary', {
+      events: number(summary.eventCount),
+      videos: number(summary.distinctVideos),
+      duration: duration(summary.totalWatchedSecs),
+    }),
   }));
 
-  mount(
-    $('watch-history'),
-    history.entries.length
-      ? el('table', {}, [
-          el('thead', {}, [el('tr', {}, ['Video', 'Watched', 'Of', 'When'].map((h) => el('th', { text: h })))]),
-          el('tbody', {}, history.entries.map((entry) =>
-            el('tr', {}, [
-              el('td', { class: 'mono', text: shortId(entry.cid, 10, 6) }),
-              el('td', { text: `${Math.round(entry.ratio * 100)}%` }),
-              el('td', { text: duration(entry.durationSecs) }),
-              el('td', { text: ago(entry.watchedAt) }),
-            ]),
-          )),
-        ])
-      : empty('○', 'No viewing recorded'),
-  );
+  const headings = [
+    'admin.privacy.col.video', 'admin.privacy.col.watched',
+    'admin.privacy.col.of', 'admin.privacy.col.when',
+  ];
+  mount($('watch-history'), history.entries.length
+    ? el('table', {}, [
+        el('thead', {}, [el('tr', {}, headings.map((key) => el('th', { text: t(key) })))]),
+        el('tbody', {}, history.entries.map((entry) =>
+          el('tr', {}, [
+            el('td', { class: 'mono', text: shortId(entry.cid, 10, 6) }),
+            el('td', { text: percent(entry.ratio) }),
+            el('td', { text: duration(entry.durationSecs) }),
+            el('td', { text: ago(entry.watchedAt) }),
+          ]),
+        )),
+      ])
+    : empty('○', 'admin.privacy.history.empty'));
 }
 
 function wirePrivacy() {
   $('clear-history').addEventListener('click', async () => {
-    if (!confirm('Erase all viewing history and the preference model on this node?')) return;
+    if (!confirm(t('admin.privacy.erase.confirm'))) return;
     try {
       await del('/v1/watch');
-      toast('Erased.');
+      toast(t('admin.privacy.erase.done'));
       await loadPrivacy();
     } catch (error) {
       reportError(error);
@@ -355,14 +369,13 @@ function wirePrivacy() {
 
 function wireShareLink() {
   $('copy-link').addEventListener('click', async () => {
-    const value = $('share-link').value;
     try {
-      await navigator.clipboard.writeText(value);
-      $('copy-state').textContent = 'copied';
+      await navigator.clipboard.writeText($('share-link').value);
+      $('copy-state').textContent = t('admin.invite.copied');
     } catch {
       // Clipboard access can be refused; selecting it is still useful.
       $('share-link').select();
-      $('copy-state').textContent = 'press ⌘C';
+      $('copy-state').textContent = t('admin.invite.copyManually');
     }
     setTimeout(() => { $('copy-state').textContent = ''; }, 2500);
   });
@@ -376,7 +389,7 @@ function wirePeerAdd() {
     button.disabled = true;
     try {
       const result = await post('/v1/peers', { target });
-      toast(`Connected to ${result.nodeName || shortId(result.peerId)}.`);
+      toast(t('admin.peers.connected', { name: result.nodeName || shortId(result.peerId) }));
       $('peer-target').value = '';
       await loadPeers();
     } catch (error) {
@@ -389,57 +402,75 @@ function wirePeerAdd() {
 
 function wireShutdown() {
   $('shutdown').addEventListener('click', async () => {
-    if (!confirm('Shut this node down? The network carries on without it.')) return;
+    if (!confirm(t('admin.shutdown.confirm'))) return;
     try {
       await post('/v1/shutdown', {});
-      toast('Shutting down.');
+      toast(t('admin.shutdown.toast'));
     } catch (error) {
       reportError(error);
     }
   });
 }
 
-function wireEvents() {
-  const badge = $('connection');
-  const text = $('connection-text');
-  const set = (label, kind) => {
-    text.textContent = label;
-    badge.className = `badge ${kind}`;
-  };
+function setConnection(label, kind) {
+  $('connection-text').textContent = label;
+  $('connection').className = `badge ${kind}`;
+}
 
+function wireEvents() {
   liveEvents({
-    connected: () => set('live', 'ok'),
-    disconnected: () => set('offline', 'danger'),
-    peerConnected: (e) => { logLine(`peer connected ${shortId(e.peerId)}`); loadPeers().catch(() => {}); },
-    peerDisconnected: (e) => { logLine(`peer disconnected ${shortId(e.peerId)}`); },
-    videoDiscovered: (e) => logLine(`discovered "${e.title}"`),
-    publishStarted: (e) => logLine(`publishing ${e.fileName}`),
-    publishCompleted: (e) => logLine(`published "${e.title}"`),
+    connected: () => setConnection(t('conn.live'), 'ok'),
+    disconnected: () => setConnection(t('conn.offline'), 'danger'),
+    peerConnected: (e) => {
+      logLine(t('admin.log.peerConnected', { peer: shortId(e.peerId) }));
+      loadPeers().catch(() => {});
+    },
+    peerDisconnected: (e) => logLine(t('admin.log.peerDisconnected', { peer: shortId(e.peerId) })),
+    videoDiscovered: (e) => logLine(t('admin.log.discovered', { title: e.title })),
+    publishStarted: (e) => logLine(t('admin.log.publishing', { file: e.fileName })),
+    publishCompleted: (e) => logLine(t('admin.log.published', { title: e.title })),
     fetchStarted: (e) => {
       transfers.set(e.cid, { cid: e.cid, done: e.alreadyHeld, total: e.totalChunks, bytes: 0 });
       renderTransfers();
-      logLine(`fetching ${shortId(e.cid)} — ${e.totalChunks} chunks`);
+      logLine(t('admin.log.fetching', { cid: shortId(e.cid), count: e.totalChunks }));
     },
     fetchProgress: (e) => {
-      transfers.set(e.cid, { cid: e.cid, done: e.completedChunks, total: e.totalChunks, bytes: e.bytesFetched });
+      transfers.set(e.cid, {
+        cid: e.cid, done: e.completedChunks, total: e.totalChunks, bytes: e.bytesFetched,
+      });
       renderTransfers();
     },
     fetchCompleted: (e) => {
-      logLine(`fetched ${shortId(e.cid)} — ${bytes(e.bytesFetched)}`);
+      logLine(t('admin.log.fetched', { cid: shortId(e.cid), bytes: bytes(e.bytesFetched) }));
       transfers.delete(e.cid);
       renderTransfers();
       loadOverview().catch(() => {});
     },
     fetchFailed: (e) => {
-      const existing = transfers.get(e.cid) || { cid: e.cid, done: 0, total: 1, bytes: 0 };
+      const existing = transfers.get(e.cid) ?? { cid: e.cid, done: 0, total: 1, bytes: 0 };
       transfers.set(e.cid, { ...existing, failed: true });
       renderTransfers();
-      logLine(`fetch failed ${shortId(e.cid)}: ${e.error}`);
+      logLine(t('admin.log.fetchFailed', { cid: shortId(e.cid), error: e.error }));
     },
   });
 }
 
+const LOADERS = {
+  overview: () => Promise.all([loadOverview(), loadShareLink()]),
+  peers: loadPeers,
+  content: () => Promise.all([loadOverview(), loadLocalVideos()]),
+  moderation: loadModeration,
+  privacy: loadPrivacy,
+};
+
+function currentPage() {
+  return location.hash.replace(/^#\/?/, '').split('/')[0] || 'overview';
+}
+
 async function boot() {
+  // Language first, so nothing renders in English and then flips.
+  await languagePicker($('language'));
+
   wireShareLink();
   wirePeerAdd();
   wireUpload();
@@ -449,15 +480,11 @@ async function boot() {
   wireShutdown();
   renderTransfers();
 
-  router((page) => {
-    const load = {
-      overview: () => Promise.all([loadOverview(), loadShareLink()]),
-      peers: loadPeers,
-      content: () => Promise.all([loadOverview(), loadLocalVideos()]),
-      moderation: loadModeration,
-      privacy: loadPrivacy,
-    }[page];
-    load?.().catch(reportError);
+  router((page) => LOADERS[page]?.().catch(reportError));
+
+  whenLocaleChanges(() => {
+    renderTransfers();
+    LOADERS[currentPage()]?.().catch(reportError);
   });
 
   try {

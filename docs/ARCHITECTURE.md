@@ -255,9 +255,45 @@ checks that every element the scripts look up exists in the page and that
 every API path they call is a route the node serves, which is the part a
 compiler would otherwise do.
 
+## Languages
+
+A language is a JSON file with a small header and a flat key-to-text map.
+Five are compiled in with `include_str!`; anything in `<data dir>/locales`
+is read at request time, so dropping a file in adds a language on the next
+page load. An installed pack replaces a built-in one with the same tag,
+which is how a shipped translation gets corrected without a release.
+
+English is the canonical key set. Packs are served merged over it, so the
+interface always has every key and a partial translation shows English for
+the rest rather than a bare identifier. The listing reports coverage per
+pack so a translator can see what is left.
+
+Plural categories are the one place a language may exceed English: a pack
+may define `_zero`, `_two`, `_few` and `_many` alongside `_one` and
+`_other`, and the browser's `Intl.PluralRules` picks between them. Arabic
+uses all six.
+
+Dates, relative times, numbers and percentages have no strings at all —
+`Intl` formats them from the locale tag. That removes most of what a
+translator would otherwise have to get right, and it is why "3 minutes ago"
+is correct in every language without anyone writing it.
+
+Right-to-left is one field. The stylesheet is written in logical properties
+(`inset-inline-end`, `border-inline-start`, `text-align: start`), so setting
+`dir="rtl"` mirrors the layout with no second stylesheet. Identifiers and
+byte counts are marked `unicode-bidi: plaintext`, because a content id is
+not an Arabic word.
+
+Tests hold the two halves together: `i18n.rs` checks that every shipped pack
+matches English key for key and placeholder for placeholder, and
+`ui_wiring.rs` checks the other direction — that the interface never asks
+for a key nobody wrote, and that no English sentence is left hard-coded in
+the markup.
+
 ## Where to start reading
 
 * the wire: `crates/protocol/src/announcement.rs`
 * the network: `crates/network/src/event_loop.rs`
 * the node: `crates/node/src/node.rs` and `crates/node/src/events.rs`
 * the proof: `crates/node/tests/acceptance.rs`
+* adding a language: `docs/TRANSLATING.md`

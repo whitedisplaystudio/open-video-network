@@ -17,6 +17,7 @@ mod api;
 mod config;
 mod dto;
 mod events;
+mod i18n;
 mod node;
 mod progress;
 mod range;
@@ -29,6 +30,7 @@ use ovn_database::Database;
 use ovn_identity::Identity;
 
 pub use config::{NodeConfig, RuntimeInfo, DEFAULT_API_PORT};
+pub use i18n::{Direction, LocalePack, LocaleSummary, PackSource};
 pub use node::{AddPeerReport, FetchReport, Node, NodeStatus, PublishReport, StreamPlan};
 pub use ovn_network::DEFAULT_P2P_PORT;
 pub use progress::NodeEvent;

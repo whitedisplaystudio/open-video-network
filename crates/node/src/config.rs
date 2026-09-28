@@ -97,6 +97,13 @@ impl NodeConfig {
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
     }
+
+    /// Language packs added by the operator. A JSON file dropped in here
+    /// shows up in the interface on the next page load — no rebuild, no
+    /// restart, nothing to register.
+    pub fn locales_dir(&self) -> PathBuf {
+        self.data_dir.join("locales")
+    }
 }
 
 impl Default for NodeConfig {
@@ -163,6 +170,7 @@ mod tests {
             config.blocks_dir(),
             config.runtime_path(),
             config.downloads_dir(),
+            config.locales_dir(),
         ] {
             assert!(path.starts_with("/tmp/ovn-test"), "{}", path.display());
         }

@@ -1,8 +1,8 @@
 // The viewer UI: browse, search, watch, and a feed computed on this device.
 
 import {
-  api, get, post, del, bytes, duration, el, mount, empty, toast, reportError,
-  liveEvents, poll, router, go, shortId,
+  get, post, bytes, duration, date, decimal, el, mount, empty, toast, reportError,
+  liveEvents, poll, router, go, shortId, t, languagePicker, whenLocaleChanges,
 } from '/assets/common.js';
 
 const $ = (id) => document.getElementById(id);
@@ -10,7 +10,6 @@ const $ = (id) => document.getElementById(id);
 const state = {
   videos: [],
   byCid: new Map(),
-  self: null,
 };
 
 // ------------------------------------------------------------ video cards
@@ -32,18 +31,14 @@ function videoCard(video) {
 
   return el(
     'button',
-    {
-      class: 'video-card',
-      type: 'button',
-      onClick: () => go('watch', video.cid),
-    },
+    { class: 'video-card', type: 'button', onClick: () => go('watch', video.cid) },
     [
       thumb,
       el('div', { class: 'body' }, [
         el('div', { class: 'title', text: video.title }),
         el('div', { class: 'meta', text: metaLine(video) }),
         video.tags.length
-          ? el('div', { class: 'tags' }, video.tags.slice(0, 3).map((t) => el('span', { class: 'tag', text: t })))
+          ? el('div', { class: 'tags' }, video.tags.slice(0, 3).map((tag) => el('span', { class: 'tag', text: tag })))
           : null,
       ]),
     ],
@@ -51,12 +46,12 @@ function videoCard(video) {
 }
 
 function metaLine(video) {
-  const parts = [];
-  if (video.isLocal) parts.push('published here');
-  else if (video.haveContent) parts.push('held locally');
-  else parts.push('on the network');
-  parts.push(shortId(video.creator, 6, 4));
-  return parts.join(' · ');
+  const where = video.isLocal
+    ? t('viewer.card.publishedHere')
+    : video.haveContent
+      ? t('viewer.card.heldLocally')
+      : t('viewer.card.onTheNetwork');
+  return `${where} · ${shortId(video.creator, 6, 4)}`;
 }
 
 function renderGrid(node, videos, emptyNode) {
@@ -69,35 +64,20 @@ async function loadVideos() {
   state.videos = await get('/v1/videos?limit=200');
   state.byCid = new Map(state.videos.map((v) => [v.cid, v]));
 
-  renderGrid(
-    $('recent'),
-    state.videos.slice(0, 12),
-    empty('◌', 'Nothing discovered yet', 'Connect to a peer from the admin page, or wait for one on your network.'),
-  );
-  renderGrid(
-    $('browse'),
-    state.videos,
-    empty('◌', 'Nothing discovered yet', 'A node with no peers hears nothing. Add one and announcements will arrive.'),
-  );
-  renderGrid(
-    $('library'),
-    state.videos.filter((v) => v.haveContent || v.isLocal),
-    empty('▤', 'Nothing held locally', 'Open a video and it will be fetched as it plays.'),
-  );
+  renderGrid($('recent'), state.videos.slice(0, 12),
+    empty('◌', 'viewer.empty.recent.title', 'viewer.empty.recent.hint'));
+  renderGrid($('browse'), state.videos,
+    empty('◌', 'viewer.empty.browse.title', 'viewer.empty.browse.hint'));
+  renderGrid($('library'), state.videos.filter((v) => v.haveContent || v.isLocal),
+    empty('▤', 'viewer.empty.library.title', 'viewer.empty.library.hint'));
 }
 
 async function loadFeed() {
   const feed = await get('/v1/recommendations?limit=12');
-  const cards = feed
-    .map((r) => state.byCid.get(r.cid))
-    .filter(Boolean)
-    .map(videoCard);
-  mount(
-    $('feed'),
-    cards.length
-      ? cards
-      : empty('☆', 'No recommendations yet', 'Watch something and a model of what you like is built here, on this device.'),
-  );
+  const cards = feed.map((r) => state.byCid.get(r.cid)).filter(Boolean).map(videoCard);
+  mount($('feed'), cards.length
+    ? cards
+    : empty('☆', 'viewer.empty.feed.title', 'viewer.empty.feed.hint'));
   $('recent-heading').hidden = cards.length === 0;
 }
 
@@ -136,7 +116,6 @@ class WatchTracker {
 
   async report({ skipped = false } = {}) {
     const seconds = Math.round(this.watched);
-    // Nothing new worth recording.
     if (seconds <= 0 || seconds === this.reported) return;
     this.reported = seconds;
     try {
@@ -174,20 +153,23 @@ async function openWatch(cid) {
 
   $('watch-title').textContent = video.title;
   $('watch-description').textContent = video.description || '';
-  mount(
-    $('watch-tags'),
-    video.tags.map((t) => el('span', { class: 'tag', text: t })),
-  );
+  mount($('watch-tags'), video.tags.map((tag) => el('span', { class: 'tag', text: tag })));
   mount($('watch-meta'), [
-    el('span', { class: 'badge', text: video.isLocal ? 'published here' : 'from the network' }),
-    el('span', { class: 'badge' + (video.haveContent ? ' ok' : ''), text: video.haveContent ? 'held locally' : 'streaming from peers' }),
+    el('span', {
+      class: 'badge',
+      text: video.isLocal ? t('viewer.card.publishedHere') : t('viewer.watch.fromNetwork'),
+    }),
+    el('span', {
+      class: `badge${video.haveContent ? ' ok' : ''}`,
+      text: video.haveContent ? t('viewer.card.heldLocally') : t('viewer.watch.streaming'),
+    }),
     video.durationSecs ? el('span', { class: 'badge', text: duration(video.durationSecs) }) : null,
   ]);
 
   mount($('watch-details'), [
-    el('dt', { text: 'Content id' }), el('dd', { class: 'mono', text: video.cid }),
-    el('dt', { text: 'Creator' }), el('dd', { class: 'mono', text: video.creator }),
-    el('dt', { text: 'Announced' }), el('dd', { text: new Date(video.createdAt * 1000).toLocaleString() }),
+    el('dt', { text: t('viewer.details.cid') }), el('dd', { class: 'mono', text: video.cid }),
+    el('dt', { text: t('viewer.details.creator') }), el('dd', { class: 'mono', text: video.creator }),
+    el('dt', { text: t('viewer.details.announced') }), el('dd', { text: date(video.createdAt) }),
   ]);
 
   // Streaming: chunks are fetched from peers as the player asks for them.
@@ -207,21 +189,22 @@ async function openWatch(cid) {
       tracker.durationSecs = player.duration;
     }
   };
+  const onError = () => toast(t('viewer.toast.playFailed'), 'error');
+
   player.addEventListener('timeupdate', onTime);
   player.addEventListener('seeked', onSeek);
   player.addEventListener('ended', onEnded);
   player.addEventListener('pause', onPause);
   player.addEventListener('loadedmetadata', onMeta);
-  player.addEventListener('error', () => {
-    toast('Could not play this video. Its data may not be available from any peer right now.', 'error');
-  });
+  player.addEventListener('error', onError);
 
   playerCleanup = () => {
-    player.removeEventListener('timeupdate', onTime);
-    player.removeEventListener('seeked', onSeek);
-    player.removeEventListener('ended', onEnded);
-    player.removeEventListener('pause', onPause);
-    player.removeEventListener('loadedmetadata', onMeta);
+    for (const [event, handler] of [
+      ['timeupdate', onTime], ['seeked', onSeek], ['ended', onEnded],
+      ['pause', onPause], ['loadedmetadata', onMeta], ['error', onError],
+    ]) {
+      player.removeEventListener(event, handler);
+    }
     player.pause();
     player.removeAttribute('src');
     player.load();
@@ -236,11 +219,12 @@ async function openWatch(cid) {
 
 function wireWatchActions(video) {
   const like = $('like');
-  like.textContent = 'Like';
+  like.textContent = t('viewer.watch.like');
+  like.classList.remove('primary');
   like.onclick = () => {
     if (!tracker) return;
     tracker.liked = !tracker.liked;
-    like.textContent = tracker.liked ? 'Liked' : 'Like';
+    like.textContent = tracker.liked ? t('viewer.watch.liked') : t('viewer.watch.like');
     like.classList.toggle('primary', tracker.liked);
     tracker.report().then(refreshWhy);
   };
@@ -248,7 +232,7 @@ function wireWatchActions(video) {
   $('follow').onclick = async () => {
     try {
       await post(`/v1/follow/${video.creator}`);
-      toast('Following. Their videos will rank higher for you.');
+      toast(t('viewer.toast.following'));
       refreshWhy();
     } catch (error) {
       reportError(error);
@@ -257,10 +241,10 @@ function wireWatchActions(video) {
 
   $('download').onclick = async () => {
     try {
-      toast('Fetching every chunk…');
+      toast(t('viewer.toast.fetching'));
       await post(`/v1/videos/${video.cid}/fetch`, {});
       const result = await post(`/v1/videos/${video.cid}/export`, {});
-      toast(`Saved to ${result.path}`);
+      toast(t('viewer.toast.saved', { path: result.path }));
       await loadVideos();
     } catch (error) {
       reportError(error);
@@ -269,8 +253,8 @@ function wireWatchActions(video) {
 
   $('block').onclick = async () => {
     try {
-      await post(`/v1/blocked/cids/${video.cid}`, { reason: 'hidden from the viewer' });
-      toast('Hidden on this node. Nobody else is affected.');
+      await post(`/v1/blocked/cids/${video.cid}`, { reason: t('admin.moderation.reason') });
+      toast(t('viewer.toast.hidden'));
       await loadVideos();
       go('browse');
     } catch (error) {
@@ -286,22 +270,25 @@ async function refreshWhy() {
     const explanation = await get(`/v1/recommendations/${encodeURIComponent(cid)}`);
     const items = explanation.reasons.map((reason) =>
       el('li', {}, [
-        el('span', { class: 'n', text: reason.detail ? `${reason.factor} · ${reason.detail}` : reason.factor }),
+        el('span', {
+          class: 'n',
+          // `tag`, `freshness` and the rest are the engine's own factor
+          // names; they are shown as-is, with the tag beside them.
+          text: reason.detail ? `${reason.factor} · ${reason.detail}` : reason.factor,
+        }),
         el('span', {
           class: `v ${reason.value >= 0 ? 'pos' : 'neg'}`,
-          text: `${reason.value >= 0 ? '+' : ''}${reason.value.toFixed(3)}`,
+          text: decimal(reason.value, 3),
         }),
       ]),
     );
-    items.push(
-      el('li', {}, [
-        el('span', { class: 'n', text: 'score' }),
-        el('span', { class: 'v', text: explanation.score.toFixed(3) }),
-      ]),
-    );
+    items.push(el('li', {}, [
+      el('span', { class: 'n', text: t('viewer.watch.score') }),
+      el('span', { class: 'v', text: decimal(explanation.score, 3) }),
+    ]));
     mount($('why'), items);
   } catch {
-    mount($('why'), el('li', {}, [el('span', { class: 'n', text: 'No model yet — watch something first.' })]));
+    mount($('why'), el('li', {}, [el('span', { class: 'n', text: t('viewer.watch.noModel') })]));
   }
 }
 
@@ -310,30 +297,31 @@ async function refreshWhy() {
 async function runSearch(query) {
   $('search-input').value = query;
   if (!query.trim()) {
-    mount($('results'), empty('⌕', 'Type something to search'));
+    mount($('results'), empty('⌕', 'viewer.empty.searchPrompt'));
     $('search-count').textContent = '';
     return;
   }
   const results = await get(`/v1/search?q=${encodeURIComponent(query)}&limit=60`);
-  $('search-count').textContent = `${results.length} result${results.length === 1 ? '' : 's'}`;
-  renderGrid($('results'), results, empty('⌕', 'Nothing matched', 'This node can only search what it has already heard about.'));
+  $('search-count').textContent = t('viewer.search.results', { count: results.length });
+  renderGrid($('results'), results,
+    empty('⌕', 'viewer.empty.search.title', 'viewer.empty.search.hint'));
 }
 
 // ------------------------------------------------------------------- boot
 
-function connectionBadge() {
-  const badge = $('connection');
-  const text = $('connection-text');
-  const set = (label, kind) => {
-    text.textContent = label;
-    badge.className = `badge ${kind}`;
-  };
+let lastPeerCount = 0;
 
+function setConnection(label, kind) {
+  $('connection-text').textContent = label;
+  $('connection').className = `badge ${kind}`;
+}
+
+function watchConnection() {
   liveEvents({
-    connected: () => set('live', 'ok'),
-    disconnected: () => set('offline', 'danger'),
+    connected: () => setConnection(t('conn.live'), 'ok'),
+    disconnected: () => setConnection(t('conn.offline'), 'danger'),
     videoDiscovered: async (event) => {
-      toast(`New video: ${event.title}`);
+      toast(t('viewer.toast.newVideo', { title: event.title }));
       await loadVideos();
     },
     fetchCompleted: () => loadVideos(),
@@ -341,32 +329,55 @@ function connectionBadge() {
 
   poll(async () => {
     const status = await get('/v1/status');
-    state.self = status;
-    const peers = status.connectedPeers;
-    set(peers === 1 ? '1 peer' : `${peers} peers`, peers > 0 ? 'ok' : 'warn');
+    lastPeerCount = status.connectedPeers;
+    setConnection(
+      t('conn.peers', { count: lastPeerCount }),
+      lastPeerCount > 0 ? 'ok' : 'warn',
+    );
   }, 5000);
 }
 
+function currentPage() {
+  return location.hash.replace(/^#\/?/, '').split('/')[0] || 'home';
+}
+
+function currentArg() {
+  return decodeURIComponent(location.hash.replace(/^#\/?/, '').split('/').slice(1).join('/'));
+}
+
+async function renderCurrent() {
+  const page = currentPage();
+  if (page === 'watch') return openWatch(currentArg());
+  if (page === 'search') return runSearch(currentArg());
+  if (page === 'home') return loadFeed();
+  return undefined;
+}
+
 async function boot() {
+  // Language first: everything rendered afterwards is already translated.
+  await languagePicker($('language'));
+
   $('search-form').addEventListener('submit', (event) => {
     event.preventDefault();
     go('search', $('search-input').value);
   });
 
-  router((page, arg) => {
-    if (page === 'watch') {
-      openWatch(arg).catch(reportError);
-      return;
-    }
-    if (playerCleanup) {
+  router((page) => {
+    if (page !== 'watch' && playerCleanup) {
       playerCleanup();
       playerCleanup = null;
     }
-    if (page === 'search') runSearch(arg).catch(reportError);
-    if (page === 'home') loadFeed().catch(reportError);
+    renderCurrent().catch(reportError);
   });
 
   window.addEventListener('pagehide', () => playerCleanup?.());
+
+  // Switching language re-renders whatever is on screen, including the
+  // lists, which hold translated labels of their own.
+  whenLocaleChanges(() => {
+    setConnection(t('conn.peers', { count: lastPeerCount }), lastPeerCount > 0 ? 'ok' : 'warn');
+    loadVideos().then(renderCurrent).catch(reportError);
+  });
 
   try {
     await loadVideos();
@@ -374,7 +385,7 @@ async function boot() {
   } catch (error) {
     reportError(error);
   }
-  connectionBadge();
+  watchConnection();
 }
 
 boot();

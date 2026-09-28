@@ -1,82 +1,85 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ourvideo</title>
+<title data-i18n="app.viewer.title">ourvideo</title>
 <link rel="stylesheet" href="/assets/app.css">
 <link rel="icon" href="data:,">
 </head>
 <body>
 
 <header class="topbar">
-  <a class="brand" href="#/home"><span class="brand-mark">▶</span> ourvideo</a>
+  <a class="brand" href="#/home">
+    <span class="brand-mark" aria-hidden="true">▶</span>
+    <span data-i18n="brand.viewer">ourvideo</span>
+  </a>
 
   <nav class="nav">
-    <button type="button" data-page="home">For you</button>
-    <button type="button" data-page="browse">Browse</button>
-    <button type="button" data-page="library">Library</button>
+    <button type="button" data-page="home" data-i18n="nav.foryou">For you</button>
+    <button type="button" data-page="browse" data-i18n="nav.browse">Browse</button>
+    <button type="button" data-page="library" data-i18n="nav.library">Library</button>
   </nav>
 
   <span class="spacer"></span>
 
   <form class="searchbar" id="search-form" role="search">
-    <label class="sr-only" for="search-input">Search discovered videos</label>
-    <input id="search-input" type="search" placeholder="Search — stays on this device" autocomplete="off">
+    <label class="sr-only" for="search-input" data-i18n="search.label">Search</label>
+    <input id="search-input" type="search" autocomplete="off"
+           data-i18n-placeholder="search.placeholder">
   </form>
 
-  <span class="badge" id="connection" title="Connection to the network">
-    <span class="dot"></span><span id="connection-text">…</span>
+  <label class="sr-only" for="language" data-i18n="language.label">Language</label>
+  <select id="language" class="lang-select"></select>
+
+  <span class="badge" id="connection" data-i18n-title="conn.title">
+    <span class="dot" aria-hidden="true"></span><span id="connection-text">…</span>
   </span>
-  <a class="badge" href="/admin" title="Node administration">Admin</a>
+  <a class="badge" href="/admin" data-i18n-title="nav.toAdmin.title">
+    <span data-i18n="nav.toAdmin">Admin</span>
+  </a>
 </header>
 
 <main>
-  <!-- For you -->
   <section class="page" data-page="home">
-    <div class="page-head"><h1>For you</h1></div>
-    <p class="lede">
-      Ranked on this device, from what you have watched here.
-      Nothing about your viewing has been sent anywhere.
-    </p>
+    <div class="page-head"><h1 data-i18n="viewer.foryou.title">For you</h1></div>
+    <p class="lede" data-i18n="viewer.foryou.lede"></p>
     <div id="feed" class="grid"></div>
-
-    <h2 id="recent-heading">Recently announced</h2>
+    <h2 id="recent-heading" data-i18n="viewer.recent.heading"></h2>
     <div id="recent" class="grid"></div>
   </section>
 
-  <!-- Browse -->
   <section class="page" data-page="browse" hidden>
-    <div class="page-head"><h1>Browse</h1></div>
-    <p class="lede">Everything this node has heard about, newest first.</p>
+    <div class="page-head"><h1 data-i18n="viewer.browse.title">Browse</h1></div>
+    <p class="lede" data-i18n="viewer.browse.lede"></p>
     <div id="browse" class="grid"></div>
   </section>
 
-  <!-- Library -->
   <section class="page" data-page="library" hidden>
-    <div class="page-head"><h1>Library</h1></div>
-    <p class="lede">Videos whose data this node holds — yours, and anything you have fetched.</p>
+    <div class="page-head"><h1 data-i18n="viewer.library.title">Library</h1></div>
+    <p class="lede" data-i18n="viewer.library.lede"></p>
     <div id="library" class="grid"></div>
   </section>
 
-  <!-- Search -->
   <section class="page" data-page="search" hidden>
-    <div class="page-head"><h1>Search</h1><span class="badge" id="search-count"></span></div>
-    <p class="lede">Searched locally with SQLite full-text search. The query never left this machine.</p>
+    <div class="page-head">
+      <h1 data-i18n="viewer.search.title">Search</h1>
+      <span class="badge" id="search-count"></span>
+    </div>
+    <p class="lede" data-i18n="viewer.search.lede"></p>
     <div id="results" class="grid"></div>
   </section>
 
-  <!-- Watch -->
   <section class="page" data-page="watch" hidden>
     <div class="player-wrap"><video id="player" controls playsinline preload="metadata"></video></div>
 
     <div class="watch-head">
       <h1 id="watch-title">…</h1>
       <div class="row">
-        <button type="button" id="like" class="small">Like</button>
-        <button type="button" id="follow" class="small">Follow creator</button>
-        <button type="button" id="download" class="small">Save a copy</button>
-        <button type="button" id="block" class="small danger">Hide</button>
+        <button type="button" id="like" class="small" data-i18n="viewer.watch.like"></button>
+        <button type="button" id="follow" class="small" data-i18n="viewer.watch.follow"></button>
+        <button type="button" id="download" class="small" data-i18n="viewer.watch.save"></button>
+        <button type="button" id="block" class="small danger" data-i18n="viewer.watch.hide"></button>
       </div>
     </div>
 
@@ -86,11 +89,11 @@
 
     <div class="cols-2">
       <div class="card">
-        <h2>Why you are seeing this</h2>
+        <h2 data-i18n="viewer.watch.why"></h2>
         <ul class="plain why" id="why"></ul>
       </div>
       <div class="card">
-        <h2>Content</h2>
+        <h2 data-i18n="viewer.watch.content"></h2>
         <dl class="kv" id="watch-details"></dl>
       </div>
     </div>

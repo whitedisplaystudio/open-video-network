@@ -37,6 +37,8 @@ the docs change with it, in the same commit:
 * new or changed command, flag, or endpoint → [`README.md`](README.md)
 * new or changed message, field, or limit → [`protocol/SPECIFICATION.md`](protocol/SPECIFICATION.md)
 * new or changed port, container, or directory → [`README.md`](README.md)
+* new or changed interface text → `crates/node/src/ui/locales/en.json`, and
+  the other shipped packs, in the same change
 * anything touching what stays on the device → [`docs/PRIVACY.md`](docs/PRIVACY.md)
 * a new threat or a new check → [`docs/SECURITY.md`](docs/SECURITY.md)
 
@@ -68,6 +70,16 @@ Both should be clean.
   reviewed library.
 * Requiring the user to understand a distributed-systems concept in order to
   do something basic.
+
+## Translations
+
+The easiest contribution, and a genuinely useful one. A language is a single
+JSON file and needs no Rust: see [`docs/TRANSLATING.md`](docs/TRANSLATING.md).
+
+If you add a string to the interface, add it to `en.json` in the same change.
+Leaving the other packs to a translator is fine — they fall back to English
+until someone gets to them — but a *shipped* pack must be complete, and the
+tests enforce that.
 
 ## Security issues
 

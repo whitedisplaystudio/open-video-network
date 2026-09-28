@@ -1,177 +1,178 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ourvideo — node</title>
+<title data-i18n="app.admin.title">ourvideo — node</title>
 <link rel="stylesheet" href="/assets/app.css">
 <link rel="icon" href="data:,">
 </head>
 <body>
 
 <header class="topbar">
-  <a class="brand" href="#/overview"><span class="brand-mark">◆</span> ourvideo node</a>
+  <a class="brand" href="#/overview"><span class="brand-mark" aria-hidden="true">◆</span>
+    <span data-i18n="brand.admin">ourvideo node</span></a>
 
   <nav class="nav">
-    <button type="button" data-page="overview">Overview</button>
-    <button type="button" data-page="peers">Peers</button>
-    <button type="button" data-page="content">Content</button>
-    <button type="button" data-page="moderation">Moderation</button>
-    <button type="button" data-page="privacy">Privacy</button>
+    <button type="button" data-page="overview" data-i18n="nav.overview">Overview</button>
+    <button type="button" data-page="peers" data-i18n="nav.peers">Peers</button>
+    <button type="button" data-page="content" data-i18n="nav.content">Content</button>
+    <button type="button" data-page="moderation" data-i18n="nav.moderation">Moderation</button>
+    <button type="button" data-page="privacy" data-i18n="nav.privacy">Privacy</button>
   </nav>
 
   <span class="spacer"></span>
 
-  <span class="badge" id="connection"><span class="dot"></span><span id="connection-text">…</span></span>
-  <a class="badge" href="/ui">Watch</a>
+  <label class="sr-only" for="language" data-i18n="language.label">Language</label>
+  <select id="language" class="lang-select"></select>
+
+  <span class="badge" id="connection" data-i18n-title="conn.title"><span class="dot" aria-hidden="true"></span><span id="connection-text">…</span></span>
+  <a class="badge" href="/ui" data-i18n="nav.toViewer">Watch</a>
 </header>
 
 <main>
   <!-- Overview -->
   <section class="page" data-page="overview">
-    <div class="page-head"><h1>Overview</h1></div>
-    <p class="lede">This node. No part of the network depends on it staying up.</p>
+    <div class="page-head"><h1 data-i18n="admin.overview.title">Overview</h1></div>
+    <p class="lede" data-i18n="admin.overview.lede"></p>
 
     <div class="stats" id="stats"></div>
 
     <div class="cols-2">
       <div class="card">
-        <h2>Identity and addresses</h2>
+        <h2 data-i18n="admin.identity.title"></h2>
         <dl class="kv" id="identity"></dl>
       </div>
 
       <div class="card">
-        <h2>Invite someone</h2>
-        <p class="lede">One link is all a newcomer needs. It stops mattering as soon as they meet a second peer.</p>
+        <h2 data-i18n="admin.invite.title"></h2>
+        <p class="lede" data-i18n="admin.invite.lede"></p>
         <div class="field">
-          <label for="share-link">Share link</label>
+          <label for="share-link" data-i18n="admin.invite.field"></label>
           <input id="share-link" type="text" readonly>
         </div>
         <div class="row">
-          <button type="button" id="copy-link" class="primary">Copy link</button>
+          <button type="button" id="copy-link" class="primary" data-i18n="admin.invite.copy"></button>
           <span class="badge" id="copy-state"></span>
         </div>
       </div>
     </div>
 
     <div class="card">
-      <h2>Transfers</h2>
+      <h2 data-i18n="admin.transfers.title"></h2>
       <div id="transfers"></div>
     </div>
 
     <div class="card">
-      <h2>Activity</h2>
+      <h2 data-i18n="admin.activity.title"></h2>
       <div class="log" id="log"></div>
     </div>
 
     <div class="card">
-      <h2>Stop this node</h2>
-      <p class="lede">Peers carry on without it. Anything you published becomes unavailable unless another node has cached it.</p>
-      <button type="button" id="shutdown" class="danger">Shut down</button>
+      <h2 data-i18n="admin.shutdown.title"></h2>
+      <p class="lede" data-i18n="admin.shutdown.lede"></p>
+      <button type="button" id="shutdown" class="danger" data-i18n="admin.shutdown.button"></button>
     </div>
   </section>
 
   <!-- Peers -->
   <section class="page" data-page="peers" hidden>
-    <div class="page-head"><h1>Peers</h1><span class="badge" id="peer-count"></span></div>
-    <p class="lede">Peers found on the local network, through the DHT, or from a link you pasted.</p>
+    <div class="page-head"><h1 data-i18n="admin.peers.title">Peers</h1><span class="badge" id="peer-count"></span></div>
+    <p class="lede" data-i18n="admin.peers.lede"></p>
 
     <div class="card">
-      <h2>Join through a link</h2>
+      <h2 data-i18n="admin.peers.join.title"></h2>
       <div class="field">
-        <label for="peer-target">URL, <code>ourvideo://</code> link, or multiaddr</label>
+        <label for="peer-target" data-i18n="admin.peers.join.label"></label>
         <input id="peer-target" type="text" placeholder="https://video.example.jp" autocomplete="off">
       </div>
-      <button type="button" id="peer-add" class="primary">Connect</button>
+      <button type="button" id="peer-add" class="primary" data-i18n="admin.peers.join.button"></button>
     </div>
 
     <div class="card">
-      <h2>Known peers</h2>
+      <h2 data-i18n="admin.peers.list.title"></h2>
       <div id="peers"></div>
     </div>
   </section>
 
   <!-- Content -->
   <section class="page" data-page="content" hidden>
-    <div class="page-head"><h1>Content</h1></div>
-    <p class="lede">What this node publishes and what it is holding for the network.</p>
+    <div class="page-head"><h1 data-i18n="admin.content.title">Content</h1></div>
+    <p class="lede" data-i18n="admin.content.lede"></p>
 
     <div class="card">
-      <h2>Publish a video</h2>
+      <h2 data-i18n="admin.publish.title"></h2>
       <div class="field">
-        <label for="upload-file">File</label>
+        <label for="upload-file" data-i18n="admin.publish.file"></label>
         <input id="upload-file" type="file" accept="video/*,audio/*">
       </div>
       <div class="field">
-        <label for="upload-title">Title</label>
-        <input id="upload-title" type="text" placeholder="Taken from the file name if left empty">
+        <label for="upload-title" data-i18n="admin.publish.titleField"></label>
+        <input id="upload-title" type="text" data-i18n-placeholder="admin.publish.titlePlaceholder">
       </div>
       <div class="field">
-        <label for="upload-description">Description</label>
+        <label for="upload-description" data-i18n="admin.publish.description"></label>
         <textarea id="upload-description"></textarea>
       </div>
       <div class="field">
-        <label for="upload-tags">Tags, comma separated</label>
-        <input id="upload-tags" type="text" placeholder="gaming, indie">
+        <label for="upload-tags" data-i18n="admin.publish.tags"></label>
+        <input id="upload-tags" type="text" data-i18n-placeholder="admin.publish.tagsPlaceholder">
       </div>
       <div class="row">
-        <button type="button" id="upload-go" class="primary">Publish</button>
+        <button type="button" id="upload-go" class="primary" data-i18n="admin.publish.button"></button>
         <span class="badge" id="upload-state"></span>
       </div>
       <div class="meter" id="upload-meter"><i></i></div>
     </div>
 
     <div class="card">
-      <h2>Storage</h2>
+      <h2 data-i18n="admin.storage.title"></h2>
       <dl class="kv" id="storage"></dl>
       <div class="meter" id="cache-meter"><i></i></div>
     </div>
 
     <div class="card">
-      <h2>Published here</h2>
+      <h2 data-i18n="admin.local.title"></h2>
       <div id="local-videos"></div>
     </div>
 
     <div class="card">
-      <h2>Creator profile</h2>
+      <h2 data-i18n="admin.profile.title"></h2>
       <div class="field">
-        <label for="profile-name">Display name</label>
+        <label for="profile-name" data-i18n="admin.profile.name"></label>
         <input id="profile-name" type="text">
       </div>
       <div class="field">
-        <label for="profile-bio">Bio</label>
+        <label for="profile-bio" data-i18n="admin.profile.bio"></label>
         <textarea id="profile-bio"></textarea>
       </div>
-      <button type="button" id="profile-save" class="primary">Publish profile</button>
+      <button type="button" id="profile-save" class="primary" data-i18n="admin.profile.save"></button>
     </div>
   </section>
 
   <!-- Moderation -->
   <section class="page" data-page="moderation" hidden>
-    <div class="page-head"><h1>Moderation</h1></div>
-    <p class="lede">
-      Local only. Blocking hides content here and stops this node serving it on.
-      No other node is affected, and nothing is reported anywhere.
-    </p>
+    <div class="page-head"><h1 data-i18n="admin.moderation.title">Moderation</h1></div>
+    <p class="lede" data-i18n="admin.moderation.lede"></p>
 
     <div class="cols-2">
       <div class="card">
-        <h2>Blocked videos</h2>
+        <h2 data-i18n="admin.moderation.videos"></h2>
         <div class="field">
-          <label for="block-cid">Content id</label>
+          <label for="block-cid" data-i18n="admin.moderation.cidLabel"></label>
           <input id="block-cid" type="text" placeholder="bafy…" autocomplete="off">
         </div>
-        <button type="button" id="block-cid-go">Block</button>
+        <button type="button" id="block-cid-go" data-i18n="admin.moderation.block"></button>
         <div id="blocked-cids"></div>
       </div>
 
       <div class="card">
-        <h2>Blocked creators</h2>
+        <h2 data-i18n="admin.moderation.creators"></h2>
         <div class="field">
-          <label for="block-creator">Public key</label>
+          <label for="block-creator" data-i18n="admin.moderation.keyLabel"></label>
           <input id="block-creator" type="text" placeholder="hex" autocomplete="off">
         </div>
-        <button type="button" id="block-creator-go">Block</button>
+        <button type="button" id="block-creator-go" data-i18n="admin.moderation.block"></button>
         <div id="blocked-creators"></div>
       </div>
     </div>
@@ -179,30 +180,27 @@
 
   <!-- Privacy -->
   <section class="page" data-page="privacy" hidden>
-    <div class="page-head"><h1>Your data</h1></div>
-    <p class="lede">
-      Everything below is stored in this node's SQLite file and nowhere else.
-      The types holding it have no serialisation, so there is no mechanism that could send them.
-    </p>
+    <div class="page-head"><h1 data-i18n="admin.privacy.title">Your data</h1></div>
+    <p class="lede" data-i18n="admin.privacy.lede"></p>
 
     <div class="cols-2">
       <div class="card">
-        <h2>Preference model</h2>
-        <p class="lede">Learned from what you watched here.</p>
+        <h2 data-i18n="admin.privacy.model"></h2>
+        <p class="lede" data-i18n="admin.privacy.modelLede"></p>
         <div id="preferences"></div>
       </div>
 
       <div class="card">
-        <h2>Viewing history</h2>
+        <h2 data-i18n="admin.privacy.history"></h2>
         <div id="watch-summary"></div>
         <div id="watch-history"></div>
       </div>
     </div>
 
     <div class="card">
-      <h2>Erase</h2>
-      <p class="lede">Removes the viewing history and the preference model. Your content is untouched.</p>
-      <button type="button" id="clear-history" class="danger">Erase viewing data</button>
+      <h2 data-i18n="admin.privacy.erase.title"></h2>
+      <p class="lede" data-i18n="admin.privacy.erase.lede"></p>
+      <button type="button" id="clear-history" class="danger" data-i18n="admin.privacy.erase.button"></button>
     </div>
   </section>
 </main>

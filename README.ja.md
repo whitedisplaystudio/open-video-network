@@ -148,6 +148,7 @@ node.db         SQLite。Peer・発見した動画・キャッシュ管理、
 blocks/         コンテンツ。1 Block 1 ファイル、ファイル名は Content ID
 downloads/      `video get` の既定の書き出し先
 uploads/        ブラウザからのアップロードの一時置き場。Chunk 化後すぐ削除されます
+locales/        言語パックの置き場。翻訳の追加・修正はここに JSON を置くだけです
 runtime.json    CLI が起動中の Node を見つけるための情報（API トークンを含むため 0600）
 ```
 
@@ -164,6 +165,12 @@ Node が2つのページを配信します。どちらも CLI と同じ Local AP
 **ストリーミング再生**。プレイヤーが要求した分だけ Chunk を Peer から取得するので、
 全部ダウンロードし終わる前に再生が始まります。`Range` に対応しているのでシークもできます。
 各レコメンドは「なぜこの順位なのか」の内訳を展開できます。
+
+どちらも 日本語・English・Español・Português・العربية に対応し、初回はブラウザの
+言語設定に合わせて表示されます。**言語は JSON ファイル1つ**です。Node の `locales`
+ディレクトリに置けば、次回の再読み込みで言語選択に現れます — 再ビルドも再起動も
+登録作業も不要です。右から左に書く言語は `"direction": "rtl"` を指定するだけで、
+レイアウト全体が反転します（[docs/TRANSLATING.md](docs/TRANSLATING.md)）。
 
 **管理用 `/admin`** — ステータス、Peer 一覧とリンクからの参加、動画の公開
 （ファイルはディスクへストリーミングしてから Chunk 化するので、メモリには載りません）、
@@ -185,7 +192,7 @@ FFmpeg が無い場合はサムネイルが付かないだけで、公開は成�
 ## 開発
 
 ```bash
-cargo test --workspace      # 273 テスト（受け入れテスト A〜H を含む）
+cargo test --workspace      # 293 テスト（受け入れテスト A〜H を含む）
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
@@ -227,6 +234,7 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools
   ストリーミングするため、回線が細いと解像度が下がるのではなくバッファリングします。
 * **Moderation はローカルのみです。** 署名付き Moderation List は V1.5 候補です。
 * **NAT traversal は基本的なものだけです。** Relay や Hole punching はまだありません。
+* **CLI は英語のみです。** Web 画面は多言語化していますが、CLI の出力とヘルプは未対応です。
 
 ---
 
@@ -234,7 +242,8 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools
 
 BDFL 方式です（[GOVERNANCE.md](GOVERNANCE.md)）。コントリビュートは
 [CONTRIBUTING.md](CONTRIBUTING.md) と
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) をご覧ください。
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) をご覧ください。翻訳が一番はじめやすい
+入口です（[docs/TRANSLATING.md](docs/TRANSLATING.md)）。
 
 ライセンスは [Apache-2.0](LICENSE-APACHE) または [MIT](LICENSE-MIT) の
 デュアルライセンスです。設計書ではライセンスが TBD のため、これは Rust

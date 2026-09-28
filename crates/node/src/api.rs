@@ -145,6 +145,10 @@ fn router(node: Node) -> Router {
         .route("/assets/common.js", get(asset_common_js))
         .route("/assets/viewer.js", get(asset_viewer_js))
         .route("/assets/admin.js", get(asset_admin_js))
+        // Language packs, like the pages, carry nothing private: the UI needs
+        // them before it can render even its "not authorised" message.
+        .route("/v1/locales", get(list_locales))
+        .route("/v1/locales/{code}", get(get_locale))
         .route("/auth", get(authenticate))
         .merge(protected)
         // Applied to everything, including the public routes: a page on
@@ -569,6 +573,30 @@ fn token_matches(presented: &str, expected: &str) -> bool {
             .zip(expected.bytes())
             .fold(0u8, |acc, (a, b)| acc | (a ^ b))
             == 0
+}
+
+// ------------------------------------------------------------- languages
+
+/// The languages this node can render its interface in.
+async fn list_locales(State(node): State<Node>) -> Json<Vec<crate::i18n::LocaleSummary>> {
+    let packs = crate::i18n::load(&node.config().locales_dir());
+    Json(crate::i18n::summarise(&packs))
+}
+
+/// One language pack, merged over English so the UI always has every key.
+async fn get_locale(
+    State(node): State<Node>,
+    Path(code): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let packs = crate::i18n::load(&node.config().locales_dir());
+    let (pack, _) = packs.get(&code).ok_or(ApiError(NodeError::NotFound))?;
+    Ok(Json(serde_json::json!({
+        "locale": pack.locale,
+        "name": pack.name,
+        "englishName": pack.english_name,
+        "direction": pack.direction.as_str(),
+        "strings": crate::i18n::merged_strings(pack),
+    })))
 }
 
 // ----------------------------------------------------------- streaming

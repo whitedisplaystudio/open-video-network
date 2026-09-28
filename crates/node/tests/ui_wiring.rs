@@ -205,6 +205,236 @@ fn substitute(path: &str, cid: &str, key: &str) -> String {
     out
 }
 
+// ---------------------------------------------------------------- language
+
+fn english_keys() -> BTreeSet<String> {
+    let body = read("locales/en.json");
+    let pack: serde_json::Value = serde_json::from_str(&body).expect("en.json must parse");
+    pack["strings"]
+        .as_object()
+        .expect("en.json has a strings object")
+        .keys()
+        .cloned()
+        .collect()
+}
+
+/// Translation keys a file asks for: `data-i18n="…"` in HTML, `t('…')` in JS.
+fn referenced_keys(source: &str) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    for marker in [
+        "data-i18n=\"",
+        "data-i18n-placeholder=\"",
+        "data-i18n-title=\"",
+        "data-i18n-label=\"",
+    ] {
+        let mut rest = source;
+        while let Some(at) = rest.find(marker) {
+            rest = &rest[at + marker.len()..];
+            if let Some(end) = rest.find('"') {
+                keys.insert(rest[..end].to_string());
+            }
+        }
+    }
+    let mut rest = source;
+    while let Some(at) = rest.find("t('") {
+        // Skip `…t('` inside a longer identifier, such as `format('`.
+        let preceded_by_word = source[..source.len() - rest.len() + at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.');
+        rest = &rest[at + 3..];
+        if preceded_by_word {
+            continue;
+        }
+        if let Some(end) = rest.find('\'') {
+            let key = &rest[..end];
+            if key.contains('.') {
+                keys.insert(key.to_string());
+            }
+        }
+    }
+    keys
+}
+
+#[test]
+fn every_translation_key_the_ui_uses_exists_in_english() {
+    // English is the canonical key set; the loader tests check that every
+    // other pack matches it. This checks the other side: that the interface
+    // never asks for a key nobody wrote.
+    let english = english_keys();
+    let mut missing: Vec<(String, String)> = Vec::new();
+
+    for file in [
+        "viewer.html",
+        "admin.html",
+        "viewer.js",
+        "admin.js",
+        "common.js",
+    ] {
+        for key in referenced_keys(&read(file)) {
+            // A key used with `{ count }` is looked up as `key_one`,
+            // `key_other` and so on, so accept either spelling.
+            let pluralised = english.contains(&format!("{key}_other"));
+            if !english.contains(&key) && !pluralised {
+                missing.push((file.to_string(), key));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "the UI asks for keys English does not define: {missing:?}"
+    );
+}
+
+#[test]
+fn the_interface_has_no_english_left_hard_coded_in_its_markup() {
+    // Anything a person reads must come from a pack. A bare sentence in the
+    // HTML would show in English whatever language was chosen.
+    for page in ["viewer.html", "admin.html"] {
+        let html = read(page);
+        for (index, line) in html.lines().enumerate() {
+            let trimmed = line.trim();
+            // Text between tags, on a line that does not carry a key.
+            let Some(start) = trimmed.find('>') else {
+                continue;
+            };
+            let after = &trimmed[start + 1..];
+            let Some(end) = after.find('<') else { continue };
+            let text = after[..end].trim();
+            if text.len() < 4 || !text.chars().any(|c| c.is_ascii_alphabetic()) {
+                continue;
+            }
+            assert!(
+                line.contains("data-i18n"),
+                "{page}:{} has untranslated text {text:?}",
+                index + 1
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_node_serves_every_shipped_language() {
+    let node = spawn_node("locales").await;
+    let base = node.running.api_url().unwrap();
+    let http = reqwest::Client::new();
+
+    // Unauthenticated on purpose: the UI needs its strings before it can
+    // render even an error about not being authorised.
+    let listing: Vec<serde_json::Value> = http
+        .get(format!("{base}/v1/locales"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let codes: Vec<&str> = listing
+        .iter()
+        .map(|row| row["locale"].as_str().unwrap())
+        .collect();
+    for expected in ["en", "ja", "es", "pt", "ar"] {
+        assert!(
+            codes.contains(&expected),
+            "{expected} should be served, got {codes:?}"
+        );
+    }
+    for row in &listing {
+        assert_eq!(row["coverage"].as_f64(), Some(1.0), "{row}");
+        assert_eq!(row["source"], "built-in");
+        assert!(!row["name"].as_str().unwrap().is_empty());
+    }
+
+    // Each pack comes back complete, and Arabic is flagged right to left.
+    let english_count = english_keys().len();
+    for code in ["en", "ja", "ar"] {
+        let pack: serde_json::Value = http
+            .get(format!("{base}/v1/locales/{code}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(pack["locale"], code);
+        let strings = pack["strings"].as_object().unwrap();
+        assert!(strings.len() >= english_count, "{code} is missing keys");
+        assert_eq!(
+            pack["direction"],
+            if code == "ar" { "rtl" } else { "ltr" },
+            "{code}"
+        );
+    }
+
+    let unknown = http
+        .get(format!("{base}/v1/locales/xx"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), reqwest::StatusCode::NOT_FOUND);
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_language_pack_dropped_into_the_data_directory_is_served() {
+    // The whole point of the plugin layout: add a language without touching
+    // the build.
+    let node = spawn_node("locales").await;
+    let dir = node.node().config().locales_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("de.json"),
+        serde_json::json!({
+            "locale": "de",
+            "name": "Deutsch",
+            "englishName": "German",
+            "direction": "ltr",
+            "formatVersion": 1,
+            "strings": { "nav.browse": "Durchsuchen" }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let base = node.running.api_url().unwrap();
+    let http = reqwest::Client::new();
+
+    let listing: Vec<serde_json::Value> = http
+        .get(format!("{base}/v1/locales"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let german = listing
+        .iter()
+        .find(|row| row["locale"] == "de")
+        .expect("the dropped pack should be listed");
+    assert_eq!(german["source"], "installed");
+    assert_eq!(german["name"], "Deutsch");
+    // One key of two hundred: reported honestly rather than rounded up.
+    let coverage = german["coverage"].as_f64().unwrap();
+    assert!(coverage > 0.0 && coverage < 0.1, "coverage was {coverage}");
+
+    let pack: serde_json::Value = http
+        .get(format!("{base}/v1/locales/de"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(pack["strings"]["nav.browse"], "Durchsuchen");
+    // Everything it does not cover falls back to English, so the page is
+    // never left with a bare key on screen.
+    assert_eq!(pack["strings"]["nav.library"], "Library");
+
+    node.shutdown().await;
+}
+
 #[test]
 fn placeholders_are_substituted_by_kind() {
     assert_eq!(

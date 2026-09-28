@@ -186,6 +186,7 @@ node.db         SQLite: peers, discovered videos, cache accounting, and
 blocks/         Content, one file per block, named by its content id.
 downloads/      Where `video get` writes playable files by default.
 uploads/        Staging for a browser upload. Emptied as soon as it is chunked.
+locales/        Drop a language pack here to add or correct a translation.
 runtime.json    How the CLI finds the running node. 0600: it holds the API token.
 ```
 
@@ -217,6 +218,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4801/v1/status | jq
 | `GET /v1/videos/{cid}/thumbnail` | Its thumbnail, fetched from a peer if needed. |
 | `POST /v1/upload?fileName=…&title=…&tags=…` | Publish a file sent as the request body. |
 | `GET /v1/events` | Server-sent events: peers, discoveries, download progress. |
+| `GET /v1/locales` · `GET /v1/locales/{code}` | **Public.** Available languages, and one pack. |
 | `GET /v1/search?q=…` | Local search. |
 | `GET /v1/recommendations` | Your feed. |
 | `GET /v1/recommendations/{cid}` | Why that score. |
@@ -249,6 +251,13 @@ peers as the player asks for them, so playback starts on the first chunk
 rather than the last. Seeking works, because the node answers `Range`
 requests. Every recommendation can be expanded into the exact terms that
 produced its score.
+
+Both are available in English, 日本語, Español, Português and العربية, and pick
+your browser's language on first load. **A language is one JSON file**: drop
+it into the node's `locales` directory and it appears in the picker on the
+next reload — no rebuild, no restart, nothing to register. Right-to-left
+languages need only `"direction": "rtl"`; the whole layout mirrors from that
+one field. See [`docs/TRANSLATING.md`](docs/TRANSLATING.md).
 
 **The admin page** (`/admin`) is for running the node: status, peers, joining
 by link, publishing (drag a file in — it is streamed to disk and chunked,
@@ -307,6 +316,7 @@ protocol/
   SPECIFICATION.md The wire protocol, for other implementations
 docs/
   ARCHITECTURE.md  How the pieces fit
+  TRANSLATING.md   Adding a language
   PRIVACY.md       What is local-only, and how that is enforced
   SECURITY.md      Threat model and the checks that answer it
   MODERATION.md    What moderation means without a centre
@@ -322,7 +332,7 @@ cannot name the types that hold your viewing data. This is
 ## Development
 
 ```bash
-cargo test --workspace      # 273 tests, including the acceptance suite
+cargo test --workspace      # 293 tests, including the acceptance suite
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
@@ -372,6 +382,8 @@ These are deliberate, and listed in the design document rather than hidden:
 * **Moderation is local only.** Signed, shareable moderation lists are a V1.5
   candidate.
 * **NAT traversal is basic.** No relay or hole punching yet.
+* **The command line is English only.** The web interface is translated; the
+  CLI's own output and help text are not, yet.
 
 ---
 
@@ -379,7 +391,8 @@ These are deliberate, and listed in the design document rather than hidden:
 
 Governance is a BDFL model; see [`GOVERNANCE.md`](GOVERNANCE.md). Contributions
 are welcome — start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and
-[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Translations are the easiest place
+to begin: [`docs/TRANSLATING.md`](docs/TRANSLATING.md).
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or
 [MIT licence](LICENSE-MIT) at your option. This dual licence is the Rust

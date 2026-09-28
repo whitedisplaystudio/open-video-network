@@ -3,7 +3,11 @@
  * One stylesheet, no build step, no framework. The pages are served from the
  * node itself under a strict Content-Security-Policy, so there are no inline
  * styles anywhere: anything dynamic is driven by a custom property set from
- * JavaScript. */
+ * JavaScript.
+ *
+ * Everything directional is written with logical properties, so switching the
+ * document to `dir="rtl"` for Arabic flips the whole layout without a second
+ * stylesheet. */
 
 :root {
   color-scheme: light dark;
@@ -190,7 +194,7 @@ h2 { font-size: 16px; font-weight: 600; margin: 0 0 10px; }
   border-radius: var(--radius);
   overflow: hidden;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   padding: 0;
   font: inherit;
   color: inherit;
@@ -214,8 +218,8 @@ h2 { font-size: 16px; font-weight: 600; margin: 0 0 10px; }
 
 .thumb .duration {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
+  inset-inline-end: 6px;
+  inset-block-end: 6px;
   background: rgba(0, 0, 0, .74);
   color: #fff;
   font-size: 11px;
@@ -331,7 +335,7 @@ input[type="file"] {
 
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th {
-  text-align: left;
+  text-align: start;
   font-size: 11px;
   letter-spacing: .06em;
   text-transform: uppercase;
@@ -379,7 +383,7 @@ td.shrink { width: 1%; white-space: nowrap; }
 .transfer .who { flex: 1; min-width: 0; }
 .transfer .who .n { font-size: 13.5px; font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .transfer .who .meter { margin-top: 6px; }
-.transfer .pct { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--text-dim); min-width: 40px; text-align: right; }
+.transfer .pct { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--text-dim); min-width: 48px; text-align: end; }
 
 /* ---------------------------------------------------------------- player */
 
@@ -422,12 +426,12 @@ ul.plain { list-style: none; margin: 0; padding: 0; }
   padding: 10px 12px;
 }
 .log div { padding: 1px 0; color: var(--text-dim); }
-.log .t { color: var(--text-faint); margin-right: 8px; }
+.log .t { color: var(--text-faint); margin-inline-end: 8px; }
 
 #toasts {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  inset-inline-end: 18px;
+  inset-block-end: 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -437,15 +441,39 @@ ul.plain { list-style: none; margin: 0; padding: 0; }
 .toast {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
+  border-inline-start: 3px solid var(--accent);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow);
   padding: 10px 14px;
   font-size: 13.5px;
   animation: rise .18s ease;
 }
-.toast.error { border-left-color: var(--danger); }
+.toast.error { border-inline-start-color: var(--danger); }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+
+/* The language picker sits in the header beside the connection badge. */
+.lang-select {
+  font: inherit;
+  font-size: 13px;
+  width: auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.lang-select:hover { color: var(--text); }
+.lang-select:focus { border-color: var(--accent); }
+
+/* An identifier or a byte count is not an Arabic word: keep it left to right
+ * even inside right-to-left text. */
+.mono,
+.stat .v,
+.transfer .pct,
+.why .v { unicode-bidi: plaintext; }
+
+[dir="rtl"] .brand-mark { transform: scaleX(-1); }
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
