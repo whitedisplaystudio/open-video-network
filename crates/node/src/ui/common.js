@@ -360,6 +360,12 @@ export function dateTime(unixSeconds) {
   return dateTimes.format(new Date((unixSeconds || 0) * 1000));
 }
 
+/** Shorten a content id or peer id for display, keeping both ends. */
+export function shortId(id, head = 8, tail = 6) {
+  if (!id || id.length <= head + tail + 1) return id || '';
+  return `${id.slice(0, head)}…${id.slice(-tail)}`;
+}
+
 /**
  * "3 minutes ago", in whatever the current language says.
  *

@@ -5,7 +5,7 @@
 
 mod support;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use support::*;
@@ -203,6 +203,130 @@ fn substitute(path: &str, cid: &str, key: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Names a module exports: `export function x`, `export const x`, `export class x`.
+fn exported_names(source: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for line in source.lines() {
+        let line = line.trim_start();
+        let Some(rest) = line.strip_prefix("export ") else {
+            continue;
+        };
+        let rest = rest.strip_prefix("async ").unwrap_or(rest);
+        for keyword in ["function ", "const ", "let ", "class "] {
+            if let Some(after) = rest.strip_prefix(keyword) {
+                let name: String = after
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                    .collect();
+                if !name.is_empty() {
+                    names.insert(name);
+                }
+                break;
+            }
+        }
+    }
+    names
+}
+
+/// Named imports in a module, as `(module path, name)` pairs.
+fn imported_names(source: &str) -> Vec<(String, String)> {
+    let mut imports = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find("import {") {
+        rest = &rest[at + "import {".len()..];
+        let Some(close) = rest.find('}') else { break };
+        let names = &rest[..close];
+        let after = &rest[close + 1..];
+        let Some(from) = after.find("from ") else {
+            break;
+        };
+        let tail = &after[from + 5..];
+        let quote = match tail.chars().next() {
+            Some(q @ ('\'' | '"')) => q,
+            _ => continue,
+        };
+        let Some(end) = tail[1..].find(quote) else {
+            break;
+        };
+        let module = tail[1..1 + end].to_string();
+        for name in names.split(',') {
+            // `a as b` imports `a`.
+            let name = name.split_whitespace().next().unwrap_or("").to_string();
+            if !name.is_empty() {
+                imports.push((module.clone(), name));
+            }
+        }
+        rest = &tail[end..];
+    }
+    imports
+}
+
+#[test]
+fn every_name_the_ui_imports_is_actually_exported() {
+    // JavaScript has no compiler to catch this, and the failure is total:
+    // one missing export and the module never links, so the page renders its
+    // frame and nothing else. That has happened once; this is why it cannot
+    // happen twice.
+    let modules: BTreeMap<&str, BTreeSet<String>> = ["common.js", "zones.js"]
+        .into_iter()
+        .map(|file| (file, exported_names(&read(file))))
+        .collect();
+
+    let mut missing = Vec::new();
+    for file in ["viewer.js", "admin.js", "common.js"] {
+        for (module, name) in imported_names(&read(file)) {
+            let target = module.rsplit('/').next().unwrap_or(&module).to_string();
+            let Some(exports) = modules.get(target.as_str()) else {
+                panic!("{file} imports from {module}, which is not a UI module");
+            };
+            if !exports.contains(&name) {
+                missing.push(format!(
+                    "{file} imports {name} from {module}, which does not export it"
+                ));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "{missing:#?}");
+}
+
+#[test]
+fn the_shared_module_exports_what_the_pages_need() {
+    // A blunt guard on the handful of helpers both pages rely on, so a
+    // rewrite of common.js cannot quietly drop one.
+    let exports = exported_names(&read("common.js"));
+    for name in [
+        "t",
+        "languagePicker",
+        "whenLocaleChanges",
+        "setLocale",
+        "translate",
+        "el",
+        "mount",
+        "clear",
+        "empty",
+        "toast",
+        "reportError",
+        "get",
+        "post",
+        "del",
+        "api",
+        "liveEvents",
+        "poll",
+        "router",
+        "go",
+        "bytes",
+        "duration",
+        "ago",
+        "shortId",
+        "date",
+        "decimal",
+        "percent",
+        "number",
+    ] {
+        assert!(exports.contains(name), "common.js no longer exports {name}");
+    }
 }
 
 // ---------------------------------------------------------------- language
