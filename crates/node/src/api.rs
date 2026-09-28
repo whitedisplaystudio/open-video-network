@@ -198,6 +198,11 @@ async fn require_token(
     request: Request,
     next: Next,
 ) -> std::result::Result<Response, StatusCode> {
+    // An operator can trade the token away for a URL that needs no setup.
+    // Loopback binding and the host check below still apply either way.
+    if node.config().api_auth == crate::config::ApiAuth::None {
+        return Ok(next.run(request).await);
+    }
     // A command line client sends a bearer header; a browser sends the
     // cookie `/auth` gave it, because a page cannot add headers to a
     // `<video src>` or an `EventSource`.

@@ -29,7 +29,7 @@ use tokio::task::JoinHandle;
 use ovn_database::Database;
 use ovn_identity::Identity;
 
-pub use config::{NodeConfig, RuntimeInfo, DEFAULT_API_PORT};
+pub use config::{ApiAuth, NodeConfig, RuntimeInfo, DEFAULT_API_PORT};
 pub use i18n::{Direction, LocalePack, LocaleSummary, PackSource};
 pub use node::{AddPeerReport, FetchReport, Node, NodeStatus, PublishReport, StreamPlan};
 pub use ovn_network::DEFAULT_P2P_PORT;
@@ -158,7 +158,7 @@ pub async fn start(config: NodeConfig) -> Result<RunningNode> {
 
     let identity = Identity::load_or_create(config.identity_path())?;
     let db = Database::open(config.database_path())?;
-    let api_token = generate_api_token();
+    let api_token = load_or_create_api_token(&config.api_token_path())?;
 
     let (network, network_events, network_task) =
         ovn_network::spawn(&identity, config.network.clone())?;
@@ -198,6 +198,13 @@ pub async fn start(config: NodeConfig) -> Result<RunningNode> {
         }
     });
 
+    if node.config().enable_api && node.config().api_auth == ApiAuth::None {
+        tracing::warn!(
+            "the local interface is not asking for a token: any account on this \
+             machine can control this node and read its viewing history"
+        );
+    }
+
     tracing::info!(
         peer_id = %node.peer_id(),
         data_dir = %node.config().data_dir.display(),
@@ -220,6 +227,38 @@ fn generate_api_token() -> String {
     data_encoding::HEXLOWER.encode(&bytes)
 }
 
+/// Load the API token, generating and persisting one on first start.
+///
+/// The token has to survive a restart or the browser's session cookie dies
+/// with it, and someone who just wants to watch a video is sent back to a
+/// terminal to fetch a new link. A file readable only by its owner is the
+/// same protection the identity key already relies on, and the identity key
+/// is worth considerably more.
+fn load_or_create_api_token(path: &std::path::Path) -> Result<String> {
+    const TOKEN_LEN: usize = 64;
+
+    if let Ok(existing) = std::fs::read_to_string(path) {
+        let existing = existing.trim().to_string();
+        if existing.len() == TOKEN_LEN && existing.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(existing);
+        }
+        tracing::warn!(
+            path = %path.display(),
+            "the stored API token is malformed; generating a new one"
+        );
+    }
+
+    let token = generate_api_token();
+    std::fs::write(path, &token)
+        .map_err(|e| NodeError::Runtime(format!("writing {}: {e}", path.display())))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +269,50 @@ mod tests {
         let b = generate_api_token();
         assert_eq!(a.len(), 64);
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn the_api_token_survives_a_restart() {
+        // Otherwise a bookmarked interface stops working every time the node
+        // is restarted.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api.token");
+        let first = load_or_create_api_token(&path).unwrap();
+        let second = load_or_create_api_token(&path).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_api_token_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api.token");
+        load_or_create_api_token(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_damaged_token_file_is_replaced_rather_than_trusted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api.token");
+        for rubbish in ["", "short", "not hex zzzz", &"a".repeat(1000)] {
+            std::fs::write(&path, rubbish).unwrap();
+            let token = load_or_create_api_token(&path).unwrap();
+            assert_eq!(token.len(), 64);
+            assert!(token.bytes().all(|b| b.is_ascii_hexdigit()));
+        }
+    }
+
+    #[test]
+    fn deleting_the_token_file_rotates_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api.token");
+        let first = load_or_create_api_token(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let second = load_or_create_api_token(&path).unwrap();
+        assert_ne!(first, second);
     }
 }

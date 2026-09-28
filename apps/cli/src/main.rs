@@ -127,6 +127,19 @@ struct StartArgs {
     /// interface works it out from the browser and this machine's settings.
     #[arg(long, env = "OURVIDEO_LOCALE")]
     locale: Option<String>,
+    /// How the web interface authenticates: `token`, or `none` to let a
+    /// bookmarked URL work with no setup.
+    ///
+    /// `none` is for a machine you do not share. It still refuses anything
+    /// that is not loopback, but any other account on this machine could
+    /// then control the node and read your viewing history.
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value = "token",
+        env = "OURVIDEO_UI_AUTH"
+    )]
+    ui_auth: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -279,6 +292,10 @@ async fn start(args: StartArgs, data_dir: PathBuf) -> Result<()> {
     if let Some(locale) = args.locale {
         config.default_locale = Some(locale);
     }
+    config.api_auth = args
+        .ui_auth
+        .parse()
+        .map_err(|e| anyhow::anyhow!("--ui-auth: {e}"))?;
     for addr in &args.bootstrap {
         config.network.bootstrap_addrs.push(
             addr.parse()
@@ -315,11 +332,19 @@ async fn start(args: StartArgs, data_dir: PathBuf) -> Result<()> {
         Ok(link) => println!("  {link}"),
         Err(e) => println!("  (not available yet: {e})"),
     }
-    if running.api_url().is_some() {
+    if let Some(url) = running.api_url() {
         println!();
         println!("Web interface:");
-        println!("  ourvideo ui           watch");
-        println!("  ourvideo ui --admin   manage this node");
+        println!("  {url}/ui      watch");
+        println!("  {url}/admin   manage this node");
+        println!();
+        if running.node().config().api_auth == ovn_node::ApiAuth::None {
+            println!("Open either one and bookmark it. No sign-in step: this node was");
+            println!("started with --ui-auth none, so anything on this machine may use it.");
+        } else {
+            println!("The first time you open these in a browser, run `ourvideo ui` to");
+            println!("sign that browser in. After that you can bookmark them.");
+        }
     }
     println!();
     println!("Leave this running. In another terminal:");
@@ -370,6 +395,10 @@ async fn run_client_command(command: Command, data_dir: PathBuf, as_json: bool) 
                 println!("Admin   {}", client.ui_url("/admin"));
                 println!();
                 println!("These links carry this node's API token. Keep them to yourself.");
+                println!();
+                println!("Once a browser has followed one, bookmark this instead:");
+                println!("  {}/ui", client.base_url());
+                println!("It keeps working, including after this node restarts.");
             } else {
                 println!("Opening {}{page}", client.base_url());
                 if let Err(e) = open_in_browser(&url) {

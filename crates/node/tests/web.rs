@@ -564,6 +564,99 @@ async fn the_auth_route_exchanges_the_token_for_a_usable_cookie() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_browser_session_survives_restarting_the_node() {
+    // Someone should be able to bookmark the interface. That only works if
+    // the token behind the session cookie outlives the process.
+    let dir = tempfile::tempdir().unwrap();
+    let config = || {
+        let mut config = ovn_node::NodeConfig::new(dir.path())
+            .with_p2p_port(0)
+            .with_api_port(0);
+        config.network.enable_mdns = false;
+        config.network.listen_addrs = vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()];
+        config
+    };
+
+    let running = ovn_node::start(config()).await.unwrap();
+    let first_token = running.node().api_token().to_string();
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Authenticate the way a browser would, and keep the cookie.
+    let response = http
+        .get(format!(
+            "{}/auth?token={first_token}&next=/ui",
+            running.api_url().unwrap()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 303);
+    let cookie = response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    running.shutdown().await;
+
+    // Start again from the same data directory, as a person would.
+    let running = ovn_node::start(config()).await.unwrap();
+    assert_eq!(
+        running.node().api_token(),
+        first_token,
+        "the token must not change across a restart"
+    );
+
+    // The cookie the browser still holds works, with no trip to a terminal.
+    let response = http
+        .get(format!("{}/v1/status", running.api_url().unwrap()))
+        .header("Cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    running.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_the_token_file_ends_every_session() {
+    // The documented way to revoke access.
+    let dir = tempfile::tempdir().unwrap();
+    let config = || {
+        let mut config = ovn_node::NodeConfig::new(dir.path())
+            .with_p2p_port(0)
+            .with_api_port(0);
+        config.network.enable_mdns = false;
+        config.network.listen_addrs = vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()];
+        config
+    };
+
+    let running = ovn_node::start(config()).await.unwrap();
+    let old_token = running.node().api_token().to_string();
+    running.shutdown().await;
+
+    std::fs::remove_file(dir.path().join("api.token")).unwrap();
+
+    let running = ovn_node::start(config()).await.unwrap();
+    assert_ne!(running.node().api_token(), old_token);
+
+    let stale = reqwest::Client::new()
+        .get(format!("{}/v1/status", running.api_url().unwrap()))
+        .header("Cookie", format!("ovn_token={old_token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), 401);
+
+    running.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_auth_redirect_cannot_be_pointed_at_another_site() {
     let node = spawn_node("ui").await;
     let client = Client::new(&node);
@@ -581,6 +674,59 @@ async fn an_auth_redirect_cannot_be_pointed_at_another_site() {
         assert_eq!(response.status(), 303);
         assert_eq!(response.headers()["location"], "/ui", "{hostile}");
     }
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_started_without_token_auth_serves_a_plain_bookmarked_url() {
+    // The point of the setting: open the URL, it works, nothing to set up.
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = ovn_node::NodeConfig::new(dir.path())
+        .with_p2p_port(0)
+        .with_api_port(0);
+    config.network.enable_mdns = false;
+    config.network.listen_addrs = vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()];
+    config.api_auth = ovn_node::ApiAuth::None;
+    let running = ovn_node::start(config).await.unwrap();
+    let base = running.api_url().unwrap();
+    let http = reqwest::Client::new();
+
+    for path in [
+        "/ui",
+        "/admin",
+        "/v1/status",
+        "/v1/watch",
+        "/v1/preferences",
+    ] {
+        let response = http.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+    }
+
+    // Everything else that keeps the outside out still applies: this is a
+    // trade against other accounts on this machine, not against the network.
+    let rebound = http
+        .get(format!("{base}/v1/status"))
+        .header("Host", "evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rebound.status(), 421);
+    assert!(running.api_addr().unwrap().ip().is_loopback());
+
+    running.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_default_still_refuses_an_unauthenticated_request() {
+    // A guard on the default, so the convenience setting cannot creep into
+    // being the normal one.
+    let node = spawn_node("guarded").await;
+    assert_eq!(node.node().config().api_auth, ovn_node::ApiAuth::Token);
+
+    let client = Client::new(&node);
+    assert_eq!(client.get("/v1/watch").send().await.unwrap().status(), 401);
+    assert_eq!(client.get("/v1/status").send().await.unwrap().status(), 401);
 
     node.shutdown().await;
 }

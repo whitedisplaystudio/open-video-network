@@ -11,6 +11,46 @@ use ovn_storage::{StorageConfig, DEFAULT_CACHE_LIMIT_BYTES};
 /// Default port for the local HTTP API. Bound to loopback only.
 pub const DEFAULT_API_PORT: u16 = 4801;
 
+/// How the local API decides whether a request is allowed.
+///
+/// Both settings bind to loopback and refuse a request whose `Host` is not a
+/// loopback name; the difference is only whether a bearer token or session
+/// cookie is required on top of that.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ApiAuth {
+    /// Require the token. Protects your viewing history from other accounts
+    /// on this machine.
+    #[default]
+    Token,
+    /// Trust anything that reaches the loopback interface.
+    ///
+    /// On a machine you do not share, this makes the interface work from a
+    /// plain bookmarked URL with no setup at all. On a shared machine it
+    /// lets any other account read your viewing history and control the
+    /// node, which is why it is not the default.
+    None,
+}
+
+impl ApiAuth {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Token => "token",
+            Self::None => "none",
+        }
+    }
+}
+
+impl std::str::FromStr for ApiAuth {
+    type Err = String;
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "token" => Ok(Self::Token),
+            "none" => Ok(Self::None),
+            other => Err(format!("expected `token` or `none`, found `{other}`")),
+        }
+    }
+}
+
 /// Everything `ourvideo start` needs, all of it optional.
 ///
 /// Principle 3: a first run must work with none of this set. The defaults
@@ -26,6 +66,8 @@ pub struct NodeConfig {
     pub api_addr: SocketAddr,
     /// Start the local HTTP API at all.
     pub enable_api: bool,
+    /// Whether the local API requires its token.
+    pub api_auth: ApiAuth,
     pub network: NetworkConfig,
     pub storage: StorageConfig,
     /// Publicly reachable addresses to advertise in the descriptor, for a
@@ -45,6 +87,7 @@ impl NodeConfig {
             node_name: default_node_name(),
             api_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DEFAULT_API_PORT),
             enable_api: true,
+            api_auth: ApiAuth::default(),
             network: NetworkConfig::default(),
             storage: StorageConfig {
                 cache_limit_bytes: DEFAULT_CACHE_LIMIT_BYTES,
@@ -94,6 +137,16 @@ impl NodeConfig {
     /// Written on start so the CLI can find a running node.
     pub fn runtime_path(&self) -> PathBuf {
         self.data_dir.join("runtime.json")
+    }
+
+    /// Bearer token for the local API.
+    ///
+    /// Kept across restarts so that a browser can bookmark the interface:
+    /// a token regenerated on every start would invalidate the session
+    /// cookie every time, and send the user back to the terminal. Delete
+    /// this file and restart to rotate it.
+    pub fn api_token_path(&self) -> PathBuf {
+        self.data_dir.join("api.token")
     }
 
     pub fn downloads_dir(&self) -> PathBuf {
@@ -177,11 +230,30 @@ mod tests {
             config.database_path(),
             config.blocks_dir(),
             config.runtime_path(),
+            config.api_token_path(),
             config.downloads_dir(),
             config.locales_dir(),
         ] {
             assert!(path.starts_with("/tmp/ovn-test"), "{}", path.display());
         }
+    }
+
+    #[test]
+    fn the_api_requires_its_token_by_default() {
+        // Viewing history is exactly the data this project promises to keep
+        // local; leaving it readable by any account on the machine would
+        // undercut that.
+        assert_eq!(NodeConfig::new("/tmp/x").api_auth, ApiAuth::Token);
+    }
+
+    #[test]
+    fn api_auth_parses_from_what_a_person_would_type() {
+        use std::str::FromStr;
+        assert_eq!(ApiAuth::from_str("token"), Ok(ApiAuth::Token));
+        assert_eq!(ApiAuth::from_str("none"), Ok(ApiAuth::None));
+        assert_eq!(ApiAuth::from_str("  None  "), Ok(ApiAuth::None));
+        assert!(ApiAuth::from_str("off").is_err());
+        assert!(ApiAuth::from_str("").is_err());
     }
 
     #[test]

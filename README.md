@@ -148,6 +148,7 @@ work with a node other than the default one.
 | `--external-addr <MULTIADDR>` | none | Advertise a reachable address, for a node behind NAT. |
 | `--cache-limit-gib` | `10` | Ceiling on fetched content. Published content is pinned and not counted. |
 | `--locale` | detected | Interface language, e.g. `ja` or `pt-BR`. Unset, it is worked out from the browser and this machine. |
+| `--ui-auth` | `token` | `none` lets a bookmarked URL work with no sign-in. Only for a machine you do not share — see below. |
 
 ### Ports
 
@@ -173,6 +174,7 @@ ourvideo --data-dir ~/.ovn-second start --port 4810 --api-port 4811
 | `OURVIDEO_DATA_DIR` | Data directory, same as `--data-dir`. |
 | `OURVIDEO_NODE_NAME` | Default node name. |
 | `OURVIDEO_LOCALE` | Default interface language, same as `--locale`. |
+| `OURVIDEO_UI_AUTH` | `token` or `none`, same as `--ui-auth`. |
 | `OURVIDEO_LOG` | Log filter, e.g. `OURVIDEO_LOG=ovn_network=debug`. |
 
 ### Where things live
@@ -190,6 +192,8 @@ downloads/      Where `video get` writes playable files by default.
 uploads/        Staging for a browser upload. Emptied as soon as it is chunked.
 locales/        Drop a language pack here to add or correct a translation.
 runtime.json    How the CLI finds the running node. 0600: it holds the API token.
+api.token       The local API's bearer token, 0600. Kept so a browser stays
+                signed in across restarts; delete it and restart to revoke.
 ```
 
 ---
@@ -246,6 +250,26 @@ Two pages, both served by the node, both talking to the same local API the
 CLI uses. `ourvideo ui` opens one; the token is exchanged once for an
 `HttpOnly`, `SameSite=Strict` cookie, because a page cannot attach an
 `Authorization` header to a `<video src>` or an `EventSource`.
+
+**You only do that once per browser.** After it, bookmark
+`http://127.0.0.1:4801/ui` and it keeps working — the token is kept in the
+data directory, so restarting the node does not sign you out. To revoke every
+session, delete `api.token` and restart.
+
+### Skipping the sign-in step
+
+On a machine you do not share, you can drop the token entirely and have the
+bookmarked URL work with nothing to set up:
+
+```bash
+ourvideo start --ui-auth none
+```
+
+What that trades: loopback binding and the `Host` check still keep the
+network and other websites out, but **any other account on this machine could
+then control the node and read your viewing history**. That is the only thing
+the token was protecting, and it is why `token` is the default — viewing
+history is exactly the data this project promises to keep to itself.
 
 **The viewer** (`/ui`) is for watching: a feed ranked on this device, browse
 and local search, and a player that **streams** — chunks are fetched from
@@ -338,7 +362,7 @@ cannot name the types that hold your viewing data. This is
 ## Development
 
 ```bash
-cargo test --workspace      # 300 tests, including the acceptance suite
+cargo test --workspace      # 312 tests, including the acceptance suite
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
@@ -370,6 +394,10 @@ running. Use `ourvideo status`, or start the second one on other ports.
 
 **`ourvideo status` says no node is running** — `runtime.json` is missing or
 stale. Start a node, or check you are pointing at the right `--data-dir`.
+
+**The web interface says it is not authorised** — that browser has never been
+signed in, or you revoked the token. Run `ourvideo ui` and open the link it
+prints; the bookmark works again afterwards.
 
 ---
 

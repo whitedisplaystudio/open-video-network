@@ -106,6 +106,7 @@ ourvideo recommendation explain <CID>   # なぜその順位なのか
 | `ourvideo ui [--admin]` | Web 画面をブラウザで開く |
 
 `start` には `--locale ja` で表示言語を固定できます（環境変数 `OURVIDEO_LOCALE` も可）。
+`--ui-auth none` を付けると、Web 画面がサインインなしの固定 URL で開けます（下記の注意点を参照）。
 | `ourvideo peer list` / `add` / `remove` | Peer の一覧・追加・削除 |
 | `ourvideo video publish <FILE>` | Chunk 分割・CID 化・署名・Announcement |
 | `ourvideo video list [--local]` | 発見済み動画 / 自分が投稿した動画 |
@@ -152,6 +153,8 @@ downloads/      `video get` の既定の書き出し先
 uploads/        ブラウザからのアップロードの一時置き場。Chunk 化後すぐ削除されます
 locales/        言語パックの置き場。翻訳の追加・修正はここに JSON を置くだけです
 runtime.json    CLI が起動中の Node を見つけるための情報（API トークンを含むため 0600）
+api.token       Local API のトークン（0600）。再起動してもブラウザのログイン状態が
+                続くよう保存されます。削除して再起動すれば全セッションを無効化できます
 ```
 
 ---
@@ -162,6 +165,24 @@ Node が2つのページを配信します。どちらも CLI と同じ Local AP
 `ourvideo ui` で開くと、トークンが一度だけ `HttpOnly` / `SameSite=Strict` の Cookie に
 交換されます（ブラウザは `<video src>` や `EventSource` に Authorization ヘッダを
 付けられないためです）。
+
+**この操作はブラウザごとに一度だけです。** 以降は `http://127.0.0.1:4801/ui` を
+ブックマークすれば、ノードを再起動しても使い続けられます（トークンはデータ
+ディレクトリに保存されます）。全セッションを無効化したいときは `api.token` を
+削除して再起動してください。
+
+### サインイン手順ごと省く
+
+共有していないマシンなら、トークンを外して「固定 URL を開くだけ」にできます。
+
+```bash
+ourvideo start --ui-auth none
+```
+
+引き換えに失うもの: loopback 束縛と `Host` 検査は残るのでネットワークや他サイトからは
+届きませんが、**同じマシンの別アカウントがノードを操作し、視聴履歴を読めるようになります**。
+トークンが守っていたのはまさにこれだけで、だからこそ既定は `token` です — 視聴履歴は
+このプロジェクトが「外に出さない」と約束しているデータそのものだからです。
 
 **視聴者用 `/ui`** — 端末内で計算したフィード、ブラウズ、ローカル検索、そして
 **ストリーミング再生**。プレイヤーが要求した分だけ Chunk を Peer から取得するので、
@@ -197,7 +218,7 @@ FFmpeg が無い場合はサムネイルが付かないだけで、公開は成�
 ## 開発
 
 ```bash
-cargo test --workspace      # 300 テスト（受け入れテスト A〜H を含む）
+cargo test --workspace      # 312 テスト（受け入れテスト A〜H を含む）
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```

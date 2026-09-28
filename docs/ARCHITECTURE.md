@@ -232,7 +232,8 @@ which contain no data of their own.
 A browser cannot attach an `Authorization` header to a `<video src>`, an
 `<img src>` or an `EventSource`, so `/auth?token=…` exchanges the token once
 for an `HttpOnly`, `SameSite=Strict` cookie and the middleware accepts
-either. Every request is also rejected unless its `Host` is a loopback name,
+either. The token lives in `api.token` and survives restarts, so that
+exchange happens once per browser and the interface can be bookmarked. Every request is also rejected unless its `Host` is a loopback name,
 which is what stops a rebound DNS name from making an attacker's page
 same-origin with the node.
 
