@@ -104,6 +104,8 @@ ourvideo recommendation explain <CID>   # なぜその順位なのか
 | `ourvideo stop` | Node を停止 |
 | `ourvideo share-link` | 自分に接続してもらうためのリンク |
 | `ourvideo ui [--admin]` | Web 画面をブラウザで開く |
+
+`start` には `--locale ja` で表示言語を固定できます（環境変数 `OURVIDEO_LOCALE` も可）。
 | `ourvideo peer list` / `add` / `remove` | Peer の一覧・追加・削除 |
 | `ourvideo video publish <FILE>` | Chunk 分割・CID 化・署名・Announcement |
 | `ourvideo video list [--local]` | 発見済み動画 / 自分が投稿した動画 |
@@ -166,8 +168,11 @@ Node が2つのページを配信します。どちらも CLI と同じ Local AP
 全部ダウンロードし終わる前に再生が始まります。`Range` に対応しているのでシークもできます。
 各レコメンドは「なぜこの順位なのか」の内訳を展開できます。
 
-どちらも 日本語・English・Español・Português・العربية に対応し、初回はブラウザの
-言語設定に合わせて表示されます。**言語は JSON ファイル1つ**です。Node の `locales`
+どちらも 日本語・English・Español・Português・العربية に対応します。表示言語は
+端末内の情報だけから決めます — 前回の選択、`--locale` での指定、ブラウザの言語設定、
+それでも決まらなければブラウザのタイムゾーンから国を判定します。**IP による位置判定は
+行いません** — 第三者に居場所と「このソフトを使っている事実」を渡すことになりますし、
+ブラウザは自分のタイムゾーンをすでに知っているので不要です。**言語は JSON ファイル1つ**です。Node の `locales`
 ディレクトリに置けば、次回の再読み込みで言語選択に現れます — 再ビルドも再起動も
 登録作業も不要です。右から左に書く言語は `"direction": "rtl"` を指定するだけで、
 レイアウト全体が反転します（[docs/TRANSLATING.md](docs/TRANSLATING.md)）。
@@ -192,7 +197,7 @@ FFmpeg が無い場合はサムネイルが付かないだけで、公開は成�
 ## 開発
 
 ```bash
-cargo test --workspace      # 293 テスト（受け入れテスト A〜H を含む）
+cargo test --workspace      # 300 テスト（受け入れテスト A〜H を含む）
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```

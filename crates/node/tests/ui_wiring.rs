@@ -321,7 +321,7 @@ async fn the_node_serves_every_shipped_language() {
 
     // Unauthenticated on purpose: the UI needs its strings before it can
     // render even an error about not being authorised.
-    let listing: Vec<serde_json::Value> = http
+    let catalogue: serde_json::Value = http
         .get(format!("{base}/v1/locales"))
         .send()
         .await
@@ -329,6 +329,7 @@ async fn the_node_serves_every_shipped_language() {
         .json()
         .await
         .unwrap();
+    let listing = catalogue["locales"].as_array().unwrap().clone();
 
     let codes: Vec<&str> = listing
         .iter()
@@ -344,7 +345,16 @@ async fn the_node_serves_every_shipped_language() {
         assert_eq!(row["coverage"].as_f64(), Some(1.0), "{row}");
         assert_eq!(row["source"], "built-in");
         assert!(!row["name"].as_str().unwrap().is_empty());
+        // Every shipped pack says which countries it serves, which is what
+        // makes the time-zone guess possible.
+        assert!(
+            !row["regions"].as_array().unwrap().is_empty(),
+            "{} claims no regions",
+            row["locale"]
+        );
     }
+    let japanese = listing.iter().find(|r| r["locale"] == "ja").unwrap();
+    assert_eq!(japanese["regions"], serde_json::json!(["JP"]));
 
     // Each pack comes back complete, and Arabic is flagged right to left.
     let english_count = english_keys().len();
@@ -401,7 +411,7 @@ async fn a_language_pack_dropped_into_the_data_directory_is_served() {
     let base = node.running.api_url().unwrap();
     let http = reqwest::Client::new();
 
-    let listing: Vec<serde_json::Value> = http
+    let catalogue: serde_json::Value = http
         .get(format!("{base}/v1/locales"))
         .send()
         .await
@@ -409,6 +419,7 @@ async fn a_language_pack_dropped_into_the_data_directory_is_served() {
         .json()
         .await
         .unwrap();
+    let listing = catalogue["locales"].as_array().unwrap().clone();
     let german = listing
         .iter()
         .find(|row| row["locale"] == "de")
@@ -433,6 +444,80 @@ async fn a_language_pack_dropped_into_the_data_directory_is_served() {
     assert_eq!(pack["strings"]["nav.library"], "Library");
 
     node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_node_offers_a_default_language_without_looking_anything_up() {
+    // Nothing here contacts anything: `configured` is what the operator set,
+    // `suggested` is what this machine's own settings say. A GeoIP lookup
+    // would mean telling a third party where the user is and that they are
+    // running this, which Principle 1 rules out.
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = ovn_node::NodeConfig::new(dir.path())
+        .with_p2p_port(0)
+        .with_api_port(0);
+    config.network.enable_mdns = false;
+    config.network.listen_addrs = vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()];
+    config.default_locale = Some("pt-BR".into());
+    let running = ovn_node::start(config).await.unwrap();
+
+    let base = running.api_url().unwrap();
+    let catalogue: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/v1/locales"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // `pt-BR` has no pack of its own, so it resolves to the Portuguese one.
+    assert_eq!(catalogue["configured"], "pt");
+    // The suggestion comes from the machine and may be anything, or nothing.
+    assert!(catalogue["suggested"].is_string() || catalogue["suggested"].is_null());
+
+    running.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_with_no_language_configured_says_so() {
+    let node = spawn_node("locales").await;
+    let base = node.running.api_url().unwrap();
+    let catalogue: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/v1/locales"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(catalogue["configured"].is_null());
+    node.shutdown().await;
+}
+
+#[test]
+fn the_time_zone_table_covers_the_regions_the_packs_claim() {
+    // A pack claiming a country nothing maps to would never be chosen by
+    // region, which is a silent failure rather than a loud one.
+    let zones = read("zones.js");
+    let mut mapped: BTreeSet<String> = BTreeSet::new();
+    for line in zones.lines() {
+        if let Some((_, country)) = line.rsplit_once(": '") {
+            mapped.insert(country.trim_end_matches("',").to_string());
+        }
+    }
+
+    for code in ["en", "ja", "es", "pt", "ar"] {
+        let pack: serde_json::Value =
+            serde_json::from_str(&read(&format!("locales/{code}.json"))).unwrap();
+        for region in pack["regions"].as_array().unwrap() {
+            let region = region.as_str().unwrap();
+            assert!(
+                mapped.contains(region),
+                "{code} claims {region}, which no time zone maps to"
+            );
+        }
+    }
 }
 
 #[test]

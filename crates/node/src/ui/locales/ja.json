@@ -4,6 +4,9 @@
   "englishName": "Japanese",
   "direction": "ltr",
   "formatVersion": 1,
+  "regions": [
+    "JP"
+  ],
   "strings": {
     "app.viewer.title": "ourvideo",
     "app.admin.title": "ourvideo — ノード",
@@ -21,6 +24,7 @@
     "nav.toAdmin.title": "ノードの管理画面",
     "nav.toViewer": "見る",
     "language.label": "言語",
+    "language.auto": "自動",
     "search.label": "発見済みの動画を検索",
     "search.placeholder": "検索 — この端末から出ません",
     "conn.title": "ネットワークへの接続状況",

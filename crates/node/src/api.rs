@@ -145,6 +145,7 @@ fn router(node: Node) -> Router {
         .route("/assets/common.js", get(asset_common_js))
         .route("/assets/viewer.js", get(asset_viewer_js))
         .route("/assets/admin.js", get(asset_admin_js))
+        .route("/assets/zones.js", get(asset_zones_js))
         // Language packs, like the pages, carry nothing private: the UI needs
         // them before it can render even its "not authorised" message.
         .route("/v1/locales", get(list_locales))
@@ -458,6 +459,7 @@ const APP_CSS: &str = include_str!("ui/app.css");
 const COMMON_JS: &str = include_str!("ui/common.js");
 const VIEWER_JS: &str = include_str!("ui/viewer.js");
 const ADMIN_JS: &str = include_str!("ui/admin.js");
+const ZONES_JS: &str = include_str!("ui/zones.js");
 
 fn page(html: &'static str) -> Response {
     (
@@ -519,6 +521,10 @@ async fn asset_admin_js() -> Response {
     script(ADMIN_JS)
 }
 
+async fn asset_zones_js() -> Response {
+    script(ZONES_JS)
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct AuthQuery {
     token: String,
@@ -577,10 +583,28 @@ fn token_matches(presented: &str, expected: &str) -> bool {
 
 // ------------------------------------------------------------- languages
 
-/// The languages this node can render its interface in.
-async fn list_locales(State(node): State<Node>) -> Json<Vec<crate::i18n::LocaleSummary>> {
+/// The languages this node can render its interface in, and what it would
+/// choose if the browser expressed no preference.
+///
+/// `configured` is an operator's deliberate choice and outranks the
+/// browser's language; `suggested` is only derived from the machine's own
+/// settings, so it sits below. Neither is a lookup: nothing leaves the
+/// machine to work either of them out.
+async fn list_locales(State(node): State<Node>) -> Json<serde_json::Value> {
     let packs = crate::i18n::load(&node.config().locales_dir());
-    Json(crate::i18n::summarise(&packs))
+    let configured = node
+        .config()
+        .default_locale
+        .as_deref()
+        .and_then(|tag| crate::i18n::best_match(&packs, tag))
+        .map(|pack| pack.locale.clone());
+    let suggested = crate::i18n::system_locale();
+
+    Json(serde_json::json!({
+        "locales": crate::i18n::summarise(&packs),
+        "configured": configured,
+        "suggested": suggested,
+    }))
 }
 
 /// One language pack, merged over English so the UI always has every key.

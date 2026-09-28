@@ -123,6 +123,10 @@ struct StartArgs {
     /// Cache ceiling for fetched content, in gibibytes.
     #[arg(long, default_value_t = 10.0)]
     cache_limit_gib: f64,
+    /// Interface language, e.g. `ja` or `pt-BR`. Left unset, the web
+    /// interface works it out from the browser and this machine's settings.
+    #[arg(long, env = "OURVIDEO_LOCALE")]
+    locale: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -271,6 +275,9 @@ async fn start(args: StartArgs, data_dir: PathBuf) -> Result<()> {
         (args.cache_limit_gib.max(0.0) * 1024.0 * 1024.0 * 1024.0) as u64;
     if let Some(name) = args.name {
         config.node_name = name;
+    }
+    if let Some(locale) = args.locale {
+        config.default_locale = Some(locale);
     }
     for addr in &args.bootstrap {
         config.network.bootstrap_addrs.push(

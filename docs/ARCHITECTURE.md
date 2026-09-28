@@ -278,6 +278,19 @@ Dates, relative times, numbers and percentages have no strings at all —
 translator would otherwise have to get right, and it is why "3 minutes ago"
 is correct in every language without anyone writing it.
 
+Which language to show is decided from local signals only, in order: the
+stored choice, the operator's `--locale`, `navigator.languages`, the country
+of the browser's time zone matched against each pack's `regions`, the
+machine's own locale, then English. The time-zone step is the only inference
+and sits below the browser's stated preference on purpose — a stated
+preference beats a guess. `zones.js` holds the IANA zone-to-country table;
+there is no IP lookup, which Principle 1 would rule out anyway and which the
+browser makes unnecessary.
+
+The region is kept separate from the pack. A browser reporting `pt-BR` gets
+the `pt` pack for words and `pt-BR` for `Intl`, so Brazil and Portugal share
+a translation without sharing a date format.
+
 Right-to-left is one field. The stylesheet is written in logical properties
 (`inset-inline-end`, `border-inline-start`, `text-align: start`), so setting
 `dir="rtl"` mirrors the layout with no second stylesheet. Identifiers and

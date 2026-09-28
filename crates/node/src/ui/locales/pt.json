@@ -4,6 +4,16 @@
   "englishName": "Portuguese",
   "direction": "ltr",
   "formatVersion": 1,
+  "regions": [
+    "BR",
+    "PT",
+    "AO",
+    "MZ",
+    "CV",
+    "GW",
+    "ST",
+    "TL"
+  ],
   "strings": {
     "app.viewer.title": "ourvideo",
     "app.admin.title": "ourvideo — nó",
@@ -21,6 +31,7 @@
     "nav.toAdmin.title": "Administração do nó",
     "nav.toViewer": "Assistir",
     "language.label": "Idioma",
+    "language.auto": "Automático",
     "search.label": "Buscar nos vídeos descobertos",
     "search.placeholder": "Buscar — não sai deste dispositivo",
     "conn.title": "Conexão com a rede",

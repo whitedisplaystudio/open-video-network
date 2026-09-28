@@ -46,6 +46,12 @@ pub struct LocalePack {
     /// `ltr` or `rtl`.
     pub direction: Direction,
     pub format_version: u32,
+    /// ISO 3166 countries where this language is spoken, used to pick a
+    /// default from the browser's time zone. Optional: a pack that lists
+    /// none is still perfectly usable, it just will not be auto-selected by
+    /// region.
+    #[serde(default)]
+    pub regions: Vec<String>,
     pub strings: BTreeMap<String, String>,
 }
 
@@ -85,6 +91,7 @@ pub struct LocaleSummary {
     pub source: PackSource,
     /// Fraction of the English key set this pack defines, `0.0..=1.0`.
     pub coverage: f64,
+    pub regions: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -270,8 +277,76 @@ pub fn summarise(packs: &BTreeMap<String, (LocalePack, PackSource)>) -> Vec<Loca
             direction: pack.direction,
             source: *source,
             coverage: coverage(pack),
+            regions: pack.regions.clone(),
         })
         .collect()
+}
+
+/// The language the machine running this node is set to, as a BCP 47 tag.
+///
+/// One more local signal for choosing a default, alongside what the browser
+/// asks for. Nothing is looked up anywhere: this is the operating system's
+/// own setting.
+pub fn system_locale() -> Option<String> {
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Some(tag) = std::env::var(key).ok().and_then(|v| normalise_posix(&v)) {
+            return Some(tag);
+        }
+    }
+    macos_locale()
+}
+
+/// `ja_JP.UTF-8` and `pt_BR@euro` both become `ja-JP` / `pt-BR`. `C` and
+/// `POSIX` mean "no preference expressed".
+fn normalise_posix(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value == "C" || value == "POSIX" {
+        return None;
+    }
+    let tag: String = value
+        .split(['.', '@'])
+        .next()
+        .unwrap_or_default()
+        .replace('_', "-");
+    is_valid_tag(&tag).then_some(tag)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_locale() -> Option<String> {
+    // A node started from Finder rather than a terminal inherits no LANG,
+    // but the system preference is still readable.
+    let output = std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleLocale"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    normalise_posix(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_locale() -> Option<String> {
+    None
+}
+
+/// The pack that best serves `tag`, by exact match then by base language.
+pub fn best_match<'a>(
+    packs: &'a BTreeMap<String, (LocalePack, PackSource)>,
+    tag: &str,
+) -> Option<&'a LocalePack> {
+    let wanted = tag.to_ascii_lowercase();
+    if let Some((pack, _)) = packs
+        .values()
+        .find(|(p, _)| p.locale.to_ascii_lowercase() == wanted)
+    {
+        return Some(pack);
+    }
+    let base = wanted.split('-').next().unwrap_or_default();
+    packs
+        .values()
+        .find(|(p, _)| p.locale.to_ascii_lowercase().split('-').next() == Some(base))
+        .map(|(pack, _)| pack)
 }
 
 #[cfg(test)]
@@ -523,6 +598,79 @@ mod tests {
         let packs = load(dir.path());
         assert!(!packs.contains_key("xx"));
         assert_eq!(packs.len(), BUILT_IN.len());
+    }
+
+    #[test]
+    fn posix_locales_become_bcp47_tags() {
+        assert_eq!(normalise_posix("ja_JP.UTF-8").as_deref(), Some("ja-JP"));
+        assert_eq!(normalise_posix("pt_BR@euro").as_deref(), Some("pt-BR"));
+        assert_eq!(normalise_posix("en").as_deref(), Some("en"));
+        assert_eq!(normalise_posix("ar_EG.utf8").as_deref(), Some("ar-EG"));
+        // "No preference" rather than a language called C.
+        assert_eq!(normalise_posix("C"), None);
+        assert_eq!(normalise_posix("POSIX"), None);
+        assert_eq!(normalise_posix(""), None);
+        assert_eq!(normalise_posix("   "), None);
+    }
+
+    #[test]
+    fn a_tag_matches_its_pack_exactly_or_by_language() {
+        let packs = load(Path::new("/nonexistent"));
+        assert_eq!(
+            best_match(&packs, "ja").map(|p| p.locale.as_str()),
+            Some("ja")
+        );
+        // Brazil and Portugal both get the Portuguese pack.
+        assert_eq!(
+            best_match(&packs, "pt-BR").map(|p| p.locale.as_str()),
+            Some("pt")
+        );
+        assert_eq!(
+            best_match(&packs, "PT-pt").map(|p| p.locale.as_str()),
+            Some("pt")
+        );
+        assert_eq!(
+            best_match(&packs, "es-MX").map(|p| p.locale.as_str()),
+            Some("es")
+        );
+        assert!(best_match(&packs, "de-DE").is_none());
+    }
+
+    #[test]
+    fn every_shipped_pack_claims_the_regions_it_serves() {
+        let packs = built_ins();
+        assert_eq!(packs["ja"].regions, vec!["JP"]);
+        for (code, expected) in [("es", "MX"), ("pt", "BR"), ("ar", "EG"), ("en", "US")] {
+            assert!(
+                packs[code].regions.iter().any(|r| r == expected),
+                "{code} should claim {expected}"
+            );
+        }
+        // A country belongs to one pack, or the choice would be arbitrary.
+        let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
+        for (code, pack) in packs {
+            for region in &pack.regions {
+                if let Some(other) = seen.insert(region, code) {
+                    panic!("{region} is claimed by both {other} and {code}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_pack_without_regions_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("xx.json"),
+            serde_json::json!({
+                "locale": "xx", "name": "X", "englishName": "X",
+                "direction": "ltr", "formatVersion": 1, "strings": {}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let packs = load(dir.path());
+        assert!(packs["xx"].0.regions.is_empty());
     }
 
     #[test]

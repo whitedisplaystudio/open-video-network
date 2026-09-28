@@ -147,6 +147,7 @@ work with a node other than the default one.
 | `--bootstrap <MULTIADDR>` | none | Optional entry points. Repeatable. |
 | `--external-addr <MULTIADDR>` | none | Advertise a reachable address, for a node behind NAT. |
 | `--cache-limit-gib` | `10` | Ceiling on fetched content. Published content is pinned and not counted. |
+| `--locale` | detected | Interface language, e.g. `ja` or `pt-BR`. Unset, it is worked out from the browser and this machine. |
 
 ### Ports
 
@@ -171,6 +172,7 @@ ourvideo --data-dir ~/.ovn-second start --port 4810 --api-port 4811
 | --- | --- |
 | `OURVIDEO_DATA_DIR` | Data directory, same as `--data-dir`. |
 | `OURVIDEO_NODE_NAME` | Default node name. |
+| `OURVIDEO_LOCALE` | Default interface language, same as `--locale`. |
 | `OURVIDEO_LOG` | Log filter, e.g. `OURVIDEO_LOG=ovn_network=debug`. |
 
 ### Where things live
@@ -252,8 +254,12 @@ rather than the last. Seeking works, because the node answers `Range`
 requests. Every recommendation can be expanded into the exact terms that
 produced its score.
 
-Both are available in English, 日本語, Español, Português and العربية, and pick
-your browser's language on first load. **A language is one JSON file**: drop
+Both are available in English, 日本語, Español, Português and العربية. The
+language is worked out from local signals only — what you picked last, what
+the operator set with `--locale`, what your browser asks for, and failing
+those, the country your browser's time zone is in. **There is no IP lookup**:
+it would mean telling a third party where you are and that you are running
+this, and the browser already knows its own time zone. **A language is one JSON file**: drop
 it into the node's `locales` directory and it appears in the picker on the
 next reload — no rebuild, no restart, nothing to register. Right-to-left
 languages need only `"direction": "rtl"`; the whole layout mirrors from that
@@ -332,7 +338,7 @@ cannot name the types that hold your viewing data. This is
 ## Development
 
 ```bash
-cargo test --workspace      # 293 tests, including the acceptance suite
+cargo test --workspace      # 300 tests, including the acceptance suite
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```

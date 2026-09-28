@@ -4,12 +4,39 @@
   "englishName": "English",
   "direction": "ltr",
   "formatVersion": 1,
+  "regions": [
+    "US",
+    "GB",
+    "AU",
+    "CA",
+    "IE",
+    "NZ",
+    "ZA",
+    "IN",
+    "NG",
+    "KE",
+    "GH",
+    "SG",
+    "PH",
+    "JM",
+    "TT",
+    "BB",
+    "BS",
+    "BZ",
+    "GY",
+    "FJ",
+    "PG",
+    "MT",
+    "ZM",
+    "ZW",
+    "UG",
+    "TZ"
+  ],
   "strings": {
     "app.viewer.title": "ourvideo",
     "app.admin.title": "ourvideo — node",
     "brand.viewer": "ourvideo",
     "brand.admin": "ourvideo node",
-
     "nav.foryou": "For you",
     "nav.browse": "Browse",
     "nav.library": "Library",
@@ -21,18 +48,15 @@
     "nav.toAdmin": "Admin",
     "nav.toAdmin.title": "Node administration",
     "nav.toViewer": "Watch",
-
     "language.label": "Language",
-
+    "language.auto": "Automatic",
     "search.label": "Search discovered videos",
     "search.placeholder": "Search — stays on this device",
-
     "conn.title": "Connection to the network",
     "conn.live": "live",
     "conn.offline": "offline",
     "conn.peers_one": "{count} peer",
     "conn.peers_other": "{count} peers",
-
     "viewer.foryou.title": "For you",
     "viewer.foryou.lede": "Ranked on this device, from what you have watched here. Nothing about your viewing has been sent anywhere.",
     "viewer.recent.heading": "Recently announced",
@@ -44,11 +68,9 @@
     "viewer.search.lede": "Searched locally with full-text search. The query never left this machine.",
     "viewer.search.results_one": "{count} result",
     "viewer.search.results_other": "{count} results",
-
     "viewer.card.publishedHere": "published here",
     "viewer.card.heldLocally": "held locally",
     "viewer.card.onTheNetwork": "on the network",
-
     "viewer.watch.like": "Like",
     "viewer.watch.liked": "Liked",
     "viewer.watch.follow": "Follow creator",
@@ -60,11 +82,9 @@
     "viewer.watch.streaming": "streaming from peers",
     "viewer.watch.score": "score",
     "viewer.watch.noModel": "No model yet — watch something first.",
-
     "viewer.details.cid": "Content id",
     "viewer.details.creator": "Creator",
     "viewer.details.announced": "Announced",
-
     "viewer.empty.recent.title": "Nothing discovered yet",
     "viewer.empty.recent.hint": "Connect to a peer from the admin page, or wait for one on your network.",
     "viewer.empty.browse.title": "Nothing discovered yet",
@@ -76,14 +96,12 @@
     "viewer.empty.search.title": "Nothing matched",
     "viewer.empty.search.hint": "This node can only search what it has already heard about.",
     "viewer.empty.searchPrompt": "Type something to search",
-
     "viewer.toast.newVideo": "New video: {title}",
     "viewer.toast.following": "Following. Their videos will rank higher for you.",
     "viewer.toast.fetching": "Fetching every chunk…",
     "viewer.toast.saved": "Saved to {path}",
     "viewer.toast.hidden": "Hidden on this node. Nobody else is affected.",
     "viewer.toast.playFailed": "Could not play this video. Its data may not be available from any peer right now.",
-
     "admin.overview.title": "Overview",
     "admin.overview.lede": "This node. No part of the network depends on it staying up.",
     "admin.stat.peers": "Peers",
@@ -95,32 +113,27 @@
     "admin.stat.cache": "Cache",
     "admin.stat.cache.sub": "of {limit}",
     "admin.stat.uptime": "Uptime",
-
     "admin.identity.title": "Identity and addresses",
     "admin.identity.peerId": "Peer id",
     "admin.identity.publicKey": "Public key",
     "admin.identity.dataDir": "Data directory",
     "admin.identity.listening": "Listening on",
     "admin.identity.nothingYet": "nothing yet",
-
     "admin.invite.title": "Invite someone",
     "admin.invite.lede": "One link is all a newcomer needs. It stops mattering as soon as they meet a second peer.",
     "admin.invite.field": "Share link",
     "admin.invite.copy": "Copy link",
     "admin.invite.copied": "copied",
     "admin.invite.copyManually": "copy it manually",
-
     "admin.transfers.title": "Transfers",
     "admin.transfers.empty": "No transfers in progress",
     "admin.transfers.failed": "failed",
     "admin.activity.title": "Activity",
-
     "admin.shutdown.title": "Stop this node",
     "admin.shutdown.lede": "Peers carry on without it. Anything you published becomes unavailable unless another node has cached it.",
     "admin.shutdown.button": "Shut down",
     "admin.shutdown.confirm": "Shut this node down? The network carries on without it.",
     "admin.shutdown.toast": "Shutting down.",
-
     "admin.peers.title": "Peers",
     "admin.peers.lede": "Peers found on the local network, through the DHT, or from a link you pasted.",
     "admin.peers.known_one": "{count} known",
@@ -140,14 +153,12 @@
     "admin.peers.never": "never",
     "admin.peers.empty.title": "No peers yet",
     "admin.peers.empty.hint": "Paste a link above, or start another node on this network.",
-
     "admin.source.mdns": "local network",
     "admin.source.dht": "the network",
     "admin.source.url": "a link",
     "admin.source.manual": "an address",
     "admin.source.bootstrap": "bootstrap",
     "admin.source.connected": "a connection",
-
     "admin.content.title": "Content",
     "admin.content.lede": "What this node publishes and what it is holding for the network.",
     "admin.publish.title": "Publish a video",
@@ -164,7 +175,6 @@
     "admin.publish.failed": "failed",
     "admin.publish.done": "Published \"{title}\" and announced it.",
     "admin.publish.doneNoPeers": "Published \"{title}\". No peers are listening yet, so nobody has been told.",
-
     "admin.storage.title": "Storage",
     "admin.storage.held": "Held",
     "admin.storage.heldValue": "{bytes} in {count} blocks",
@@ -172,7 +182,6 @@
     "admin.storage.pinnedValue": "{bytes} — published here, never evicted",
     "admin.storage.limit": "Limit",
     "admin.storage.limitValue": "{bytes} of fetched content",
-
     "admin.local.title": "Published here",
     "admin.local.col.video": "Video",
     "admin.local.col.length": "Length",
@@ -181,14 +190,12 @@
     "admin.local.watch": "Watch",
     "admin.local.empty.title": "Nothing published here yet",
     "admin.local.empty.hint": "Pick a file above.",
-
     "admin.profile.title": "Creator profile",
     "admin.profile.name": "Display name",
     "admin.profile.bio": "Bio",
     "admin.profile.save": "Publish profile",
     "admin.profile.needName": "A display name is required.",
     "admin.profile.saved": "Profile signed and announced.",
-
     "admin.moderation.title": "Moderation",
     "admin.moderation.lede": "Local only. Blocking hides content here and stops this node serving it on. No other node is affected, and nothing is reported anywhere.",
     "admin.moderation.videos": "Blocked videos",
@@ -200,7 +207,6 @@
     "admin.moderation.blocked": "Blocked here. No other node is affected.",
     "admin.moderation.reason": "blocked from the admin page",
     "admin.moderation.empty": "Nothing blocked",
-
     "admin.privacy.title": "Your data",
     "admin.privacy.lede": "Everything below is stored in this node's database and nowhere else. The types holding it have no serialisation, so there is no mechanism that could send them.",
     "admin.privacy.model": "Preference model",
@@ -219,7 +225,6 @@
     "admin.privacy.erase.button": "Erase viewing data",
     "admin.privacy.erase.confirm": "Erase all viewing history and the preference model on this node?",
     "admin.privacy.erase.done": "Erased.",
-
     "admin.log.peerConnected": "peer connected {peer}",
     "admin.log.peerDisconnected": "peer disconnected {peer}",
     "admin.log.discovered": "discovered \"{title}\"",
@@ -228,7 +233,6 @@
     "admin.log.fetching": "fetching {cid} — {count} chunks",
     "admin.log.fetched": "fetched {cid} — {bytes}",
     "admin.log.fetchFailed": "fetch failed {cid}: {error}",
-
     "error.unauthorised": "This page is not authorised. Run `ourvideo ui` and open the link it prints.",
     "error.unexpected": "The node replied with something unexpected."
   }

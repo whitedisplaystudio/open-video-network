@@ -49,8 +49,11 @@ export const del = (path) => api(path, { method: 'DELETE' });
 
 // ---------------------------------------------------------------- language
 
+import { detectCountry } from '/assets/zones.js';
+
 let strings = {};
-let locale = 'en';
+let locale = 'en';          // the pack in use
+let formatLocale = 'en';    // the full tag Intl formats with
 let plurals = new Intl.PluralRules('en');
 let numbers = new Intl.NumberFormat('en');
 let relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
@@ -59,6 +62,7 @@ let dateTimes = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 
 const onLocaleChange = [];
 
 const STORED_LOCALE = 'ovn.locale';
+const AUTOMATIC = 'auto';
 
 /**
  * Look up a translated string.
@@ -80,40 +84,91 @@ export function t(key, vars) {
   );
 }
 
-/** The packs this node can serve. */
-export async function availableLocales() {
+/** The packs this node can serve, plus what it would choose itself. */
+export async function localeCatalogue() {
   const response = await fetch('/v1/locales', { credentials: 'same-origin' });
-  if (!response.ok) return [];
+  if (!response.ok) return { locales: [], configured: null, suggested: null };
   return response.json();
 }
 
-/**
- * Choose a language: what was picked here before, then what the browser
- * asks for, then English.
- */
-function preferredLocale(available) {
-  const codes = available.map((l) => l.locale);
-  let stored = null;
+function readStored() {
   try {
-    stored = localStorage.getItem(STORED_LOCALE);
+    return localStorage.getItem(STORED_LOCALE);
   } catch {
-    // Private windows and blocked storage: fall through to the browser's
-    // own preference, which is a fine answer anyway.
+    // Private windows and blocked storage: fall through to detection, which
+    // is a fine answer anyway.
+    return null;
   }
-  if (stored && codes.includes(stored)) return stored;
+}
+
+function matchPack(packs, tag) {
+  const wanted = tag.toLowerCase();
+  const exact = packs.find((p) => p.locale.toLowerCase() === wanted);
+  if (exact) return exact;
+  const base = wanted.split('-')[0];
+  return packs.find((p) => p.locale.toLowerCase().split('-')[0] === base) ?? null;
+}
+
+/**
+ * Work out which language to show, from local signals only.
+ *
+ * In order:
+ *
+ *   1. what was chosen here before;
+ *   2. what the operator set on the node, if anything;
+ *   3. what the browser asks for — an explicit preference beats a guess;
+ *   4. where the browser's time zone says it is;
+ *   5. the language this machine's operating system is set to;
+ *   6. English.
+ *
+ * Step 4 is the only inference, and it is last among the automatic ones for
+ * a reason: someone reading Japanese in Frankfurt should not be handed
+ * German. It is what helps the case that actually matters — a browser set to
+ * English on a device in São Paulo.
+ *
+ * Nothing here contacts anything. There is no IP lookup, and there will not
+ * be one: it would mean telling a third party both where you are and that
+ * you are running this.
+ */
+function resolveLocale(catalogue) {
+  const packs = catalogue.locales ?? [];
+  if (!packs.length) return { pack: 'en', format: 'en' };
+
+  const stored = readStored();
+  if (stored && stored !== AUTOMATIC) {
+    const chosen = matchPack(packs, stored);
+    if (chosen) return { pack: chosen.locale, format: stored };
+  }
+
+  if (catalogue.configured) {
+    const chosen = matchPack(packs, catalogue.configured);
+    if (chosen) return { pack: chosen.locale, format: catalogue.configured };
+  }
 
   for (const wanted of navigator.languages ?? [navigator.language ?? 'en']) {
-    const exact = codes.find((c) => c.toLowerCase() === wanted.toLowerCase());
-    if (exact) return exact;
-    const base = wanted.split('-')[0].toLowerCase();
-    const loose = codes.find((c) => c.split('-')[0].toLowerCase() === base);
-    if (loose) return loose;
+    const chosen = matchPack(packs, wanted);
+    if (chosen) return { pack: chosen.locale, format: wanted };
   }
-  return codes.includes('en') ? 'en' : codes[0];
+
+  const country = detectCountry();
+  if (country) {
+    const chosen = packs.find((p) => (p.regions ?? []).includes(country));
+    // The region also sharpens the formatting: Brazil and Portugal share a
+    // pack but not a date format.
+    if (chosen) return { pack: chosen.locale, format: `${chosen.locale}-${country}` };
+  }
+
+  if (catalogue.suggested) {
+    const chosen = matchPack(packs, catalogue.suggested);
+    if (chosen) return { pack: chosen.locale, format: catalogue.suggested };
+  }
+
+  const fallback = packs.find((p) => p.locale === 'en') ?? packs[0];
+  return { pack: fallback.locale, format: fallback.locale };
 }
 
 /** Load a pack and apply it to the page. */
-export async function setLocale(code, { remember = true } = {}) {
+export async function setLocale(code, { remember = true, format = null } = {}) {
   const response = await fetch(`/v1/locales/${encodeURIComponent(code)}`, {
     credentials: 'same-origin',
   });
@@ -122,20 +177,32 @@ export async function setLocale(code, { remember = true } = {}) {
 
   strings = pack.strings;
   locale = pack.locale;
-  plurals = new Intl.PluralRules(locale);
-  numbers = new Intl.NumberFormat(locale);
-  relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
-  dates = new Intl.DateTimeFormat(locale, { dateStyle: 'medium' });
-  dateTimes = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
+  formatLocale = format ?? pack.locale;
 
-  document.documentElement.lang = locale;
+  // Intl will reject a malformed tag; fall back to the pack rather than
+  // breaking every date on the page.
+  const intlFor = (options) => {
+    try {
+      return new Intl.DateTimeFormat(formatLocale, options);
+    } catch {
+      formatLocale = pack.locale;
+      return new Intl.DateTimeFormat(pack.locale, options);
+    }
+  };
+  dates = intlFor({ dateStyle: 'medium' });
+  dateTimes = intlFor({ dateStyle: 'medium', timeStyle: 'short' });
+  plurals = new Intl.PluralRules(formatLocale);
+  numbers = new Intl.NumberFormat(formatLocale);
+  relative = new Intl.RelativeTimeFormat(formatLocale, { numeric: 'auto' });
+
+  document.documentElement.lang = formatLocale;
   // Arabic and Hebrew flip the whole layout; the stylesheet is written in
   // logical properties so this one attribute is the entire change.
   document.documentElement.dir = pack.direction ?? 'ltr';
 
   if (remember) {
     try {
-      localStorage.setItem(STORED_LOCALE, locale);
+      localStorage.setItem(STORED_LOCALE, code);
     } catch {
       // A remembered language is a convenience, not a requirement.
     }
@@ -152,6 +219,10 @@ export function whenLocaleChanges(fn) {
 
 export function currentLocale() {
   return locale;
+}
+
+export function currentFormatLocale() {
+  return formatLocale;
 }
 
 /**
@@ -179,24 +250,45 @@ export function translate(root = document) {
 
 /** Build the language picker and wire it up. */
 export async function languagePicker(select) {
-  const available = await availableLocales();
-  if (!available.length) return;
+  const catalogue = await localeCatalogue();
+  const packs = catalogue.locales ?? [];
+  if (!packs.length) return;
 
-  await setLocale(preferredLocale(available), { remember: false });
+  const resolved = resolveLocale(catalogue);
+  await setLocale(resolved.pack, { remember: false, format: resolved.format });
 
-  for (const pack of available) {
-    select.append(
-      el('option', {
+  const stored = readStored();
+  const render = () => {
+    clear(select);
+    // "Automatic" is how someone undoes a choice without clearing storage
+    // by hand.
+    select.append(el('option', { value: AUTOMATIC, text: t('language.auto') }));
+    for (const pack of packs) {
+      select.append(el('option', {
         value: pack.locale,
         // The language's own name, so you can find yours without reading
         // the one you do not speak.
         text: pack.name,
-        selected: pack.locale === locale,
-      }),
-    );
-  }
-  select.value = locale;
-  select.addEventListener('change', () => setLocale(select.value));
+      }));
+    }
+    select.value = stored && stored !== AUTOMATIC ? locale : AUTOMATIC;
+  };
+  render();
+  whenLocaleChanges(render);
+
+  select.addEventListener('change', async () => {
+    if (select.value === AUTOMATIC) {
+      try {
+        localStorage.removeItem(STORED_LOCALE);
+      } catch {
+        // Nothing stored means automatic anyway.
+      }
+      const again = resolveLocale({ ...catalogue, locales: packs });
+      await setLocale(again.pack, { remember: false, format: again.format });
+    } else {
+      await setLocale(select.value);
+    }
+  });
 }
 
 // ------------------------------------------------------------ formatting
@@ -207,7 +299,7 @@ export async function languagePicker(select) {
  * gets a comma.
  */
 export function bytes(n) {
-  if (!n) return `0 B`;
+  if (!n) return '0 B';
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   let value = n;
   let unit = 0;
@@ -218,9 +310,10 @@ export function bytes(n) {
   const formatted =
     unit === 0
       ? numbers.format(n)
-      : new Intl.NumberFormat(locale, { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(
-          value,
-        );
+      : new Intl.NumberFormat(formatLocale, {
+          maximumFractionDigits: 1,
+          minimumFractionDigits: 1,
+        }).format(value);
   return `${formatted} ${units[unit]}`;
 }
 
@@ -241,7 +334,7 @@ export function duration(secs) {
 }
 
 export function percent(fraction) {
-  return new Intl.NumberFormat(locale, {
+  return new Intl.NumberFormat(formatLocale, {
     style: 'percent',
     maximumFractionDigits: 0,
   }).format(fraction || 0);
@@ -252,7 +345,7 @@ export function number(n) {
 }
 
 export function decimal(n, digits = 2) {
-  return new Intl.NumberFormat(locale, {
+  return new Intl.NumberFormat(formatLocale, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
     signDisplay: 'exceptZero',

@@ -63,7 +63,47 @@ release.
 | `englishName` | Its name in English, so an operator can read the list. |
 | `direction` | `ltr`, or `rtl` for Arabic, Hebrew, Persian and friends. |
 | `formatVersion` | `1`. |
+| `regions` | ISO 3166 countries where this language is spoken. Optional, but it is what lets the interface pick your language for someone whose browser gave no usable hint. |
 | `strings` | Key to translated text. |
+
+---
+
+## How a default is chosen
+
+The interface works out a language from local signals only, in this order:
+
+1. what was chosen in the picker here before;
+2. what the operator set on the node (`ourvideo start --locale ja`, or
+   `OURVIDEO_LOCALE`);
+3. what the browser asks for — `navigator.languages`;
+4. the country the browser's **time zone** is in, matched against each pack's
+   `regions`;
+5. the language the machine running the node is set to;
+6. English.
+
+Step 4 is the only inference, and it sits below the browser's own preference
+deliberately: someone reading Japanese in Frankfurt should not be handed
+German. It exists for the case that actually matters — a browser left on
+English, on a device in São Paulo.
+
+**There is no IP lookup, and there will not be one.** It would mean telling a
+third party both where the user is and that they are running this, which
+Principle 1 rules out and which the browser makes unnecessary: it already
+knows its own time zone.
+
+The region also sharpens formatting. Brazil and Portugal share the `pt` pack
+but not a date format, so a browser reporting `pt-BR` gets the pack for `pt`
+and Brazilian dates, numbers and relative times.
+
+### Refreshing the time zone table
+
+`crates/node/src/ui/zones.js` maps IANA time zones to countries. It is
+transcribed from the public-domain `zone.tab` in the system time zone
+database (`/usr/share/zoneinfo/zone.tab`, or `/var/db/timezone/zoneinfo`
+on macOS), with the legacy zone names some browsers still report added by
+hand. Countries rarely move; regenerate it if the database gains a zone your
+pack needs. A test checks that every country a shipped pack claims is
+actually in the table.
 
 ---
 

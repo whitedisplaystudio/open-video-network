@@ -31,6 +31,10 @@ pub struct NodeConfig {
     /// Publicly reachable addresses to advertise in the descriptor, for a
     /// node behind a NAT or a reverse proxy.
     pub external_addrs: Vec<Multiaddr>,
+    /// Interface language for this node, if the operator set one deliberately.
+    /// Left unset, the interface works it out from the browser and the
+    /// machine's own settings.
+    pub default_locale: Option<String>,
 }
 
 impl NodeConfig {
@@ -46,6 +50,10 @@ impl NodeConfig {
                 cache_limit_bytes: DEFAULT_CACHE_LIMIT_BYTES,
             },
             external_addrs: Vec::new(),
+            default_locale: std::env::var("OURVIDEO_LOCALE")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
         }
     }
 
