@@ -1,21 +1,25 @@
 name: CI
 
-# Runner minutes are metered while this repository is private, and the
-# multipliers are not equal: Linux counts 1x, Windows 2x and macOS 10x. So
-# Linux runs on every push, and the expensive platforms run weekly, on
-# demand, and before a release — often enough to catch a break, rarely
-# enough to stay inside the free allowance.
+# Runs only when asked: from the Actions tab, or `gh workflow run ci.yml`.
 #
-# Making the repository public removes the metering entirely.
+# Runner minutes are metered while this repository is private, and the
+# multipliers are not equal — Linux counts 1x, Windows 2x and macOS 10x — so
+# nothing here starts on its own. Run it before tagging a release, and after
+# anything that touches platform-specific code.
+#
+# To go back to running on every push, add a `push:` trigger below. Making
+# the repository public removes the metering entirely.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
-  schedule:
-    # Monday morning, UTC.
-    - cron: "0 3 * * 1"
+    inputs:
+      platforms:
+        description: Which platforms to test
+        type: choice
+        default: linux
+        options:
+          - linux
+          - all
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -30,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install the toolchain
         run: rustup component add rustfmt clippy
@@ -57,12 +61,7 @@ jobs:
 
   other-platforms:
     name: ${{ matrix.os }}
-    # Everything below this line is charged at a multiple, so it is not on
-    # the every-push path.
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.ref, 'refs/tags/')
+    if: inputs.platforms == 'all'
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +69,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
 
       - name: Build

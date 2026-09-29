@@ -409,10 +409,19 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
 
-[CI](.github/workflows/ci.yml) runs all three on Linux for every push, and
-on macOS and Windows weekly, on demand, and before a release. The split is
-about money rather than principle: while this repository is private, runner
-minutes are metered and macOS counts ten times a Linux minute.
+[CI](.github/workflows/ci.yml) runs the same three on GitHub's machines, and
+only when asked:
+
+```bash
+gh workflow run ci.yml                        # Linux
+gh workflow run ci.yml -f platforms=all       # Linux, macOS and Windows
+```
+
+Nothing starts on its own, because runner minutes are metered while this
+repository is private and the multipliers are unequal — Linux counts 1x,
+Windows 2x, macOS 10x. Run it before tagging a release, and after anything
+that touches platform-specific code. Making the repository public removes
+the metering, and the reason for the restraint.
 
 The acceptance tests in `crates/node/tests/acceptance.rs` start real nodes —
 real identities, real SQLite files, real libp2p swarms on ephemeral loopback

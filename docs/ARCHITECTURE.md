@@ -149,6 +149,14 @@ Two properties matter:
   node knows it is reachable itself — so a node never offers a service it
   cannot provide.
 
+A reservation we stop needing is left to expire rather than closed. Closing
+the listener drops libp2p's bookkeeping for that connection, and an
+acceptance or renewal already in flight then panics a runtime worker inside
+`libp2p-relay`. Renewals run on a timer, so there is no moment that is
+reliably safe; a node that becomes reachable simply stops asking for new
+slots. Windows CI found this, having been the only platform where the race
+actually landed.
+
 A relayed address is deliberately *not* treated as being reachable. The
 router still refuses everything; it is somewhere others can find us, not us
 becoming dialable. Conflating the two would stop the node looking for further

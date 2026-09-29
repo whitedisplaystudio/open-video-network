@@ -113,15 +113,13 @@ impl EventLoop {
         );
         self.reachability = reachability;
 
-        // Relay capacity is somebody else's bandwidth. Once other peers can
-        // dial us directly, give it back to whoever still needs it.
-        if reachability == Reachability::Public && !self.relays.is_empty() {
-            for (peer, listener) in self.relays.drain() {
-                tracing::info!(%peer, "no longer need a relay; releasing the slot");
-                self.swarm.remove_listener(listener);
-            }
-        }
-
+        // A reservation we no longer need is left to lapse rather than
+        // closed. Closing the listener drops libp2p's bookkeeping for that
+        // connection, and a reservation acceptance or renewal already in
+        // flight then panics a runtime worker inside `libp2p-relay`
+        // (`priv_client.rs`: "Relay connection exist"). Since renewals happen
+        // on a timer there is no moment that is reliably safe, so we stop
+        // asking for new slots and let the existing ones expire on their own.
         self.emit(NetworkEvent::ReachabilityChanged { reachability });
     }
 

@@ -285,10 +285,18 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
 
-[CI](.github/workflows/ci.yml) は push のたびに Linux で3つすべてを実行し、
-macOS と Windows は週次・手動・リリース前に実行します。この分け方は理念ではなく
-費用の問題です — 非公開リポジトリでは実行時間が課金対象で、macOS は Linux の
-10倍換算になります。
+[CI](.github/workflows/ci.yml) は GitHub のマシン上で同じ3つを実行しますが、
+**指示したときだけ**動きます。
+
+```bash
+gh workflow run ci.yml                        # Linux のみ
+gh workflow run ci.yml -f platforms=all       # Linux / macOS / Windows
+```
+
+自動では一切起動しません。非公開リポジトリでは実行時間が課金対象で、倍率も
+一定ではないためです（Linux 1倍、Windows 2倍、macOS 10倍）。リリースにタグを
+打つ前と、プラットフォーム依存のコードを触ったあとに実行してください。
+公開リポジトリにすれば課金がなくなり、この制約自体が不要になります。
 
 `crates/node/tests/acceptance.rs` の受け入れテストは、実際の Node
 （実 Identity・実 SQLite・実 libp2p Swarm、ループバックの空きポート）を

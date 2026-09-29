@@ -52,7 +52,7 @@ jobs:
             archive: zip
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Add the target
         run: rustup target add ${{ matrix.target }}
