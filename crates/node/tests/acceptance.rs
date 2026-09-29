@@ -569,3 +569,170 @@ async fn blocking_a_creator_stops_their_announcements_being_stored() {
     a.shutdown().await;
     b.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn blocking_content_stops_this_node_holding_and_serving_it() {
+    // Section 33: blocking is not only about what you see, it is about not
+    // participating in distributing something. Refusing requests alone would
+    // not do it — a peer asking for a chunk never says which video it belongs
+    // to — so the content goes.
+    let publisher = spawn_node("publisher").await;
+    let viewer = spawn_node("viewer").await;
+    join_via_share_link(&viewer, &publisher).await;
+
+    let source = write_sample_file(publisher.dir.path(), "unwanted.mp4", 2 * 1024 * 1024 + 11);
+    let cid = publish_until_announced(publisher.node(), &source, "Unwanted", &["gaming"]).await;
+
+    let viewer_node = viewer.node().clone();
+    wait_until(PROPAGATION_TIMEOUT, || {
+        viewer_node
+            .video(&cid)
+            .map(|v| v.is_some())
+            .unwrap_or(false)
+    })
+    .await
+    .expect("the announcement should arrive");
+
+    viewer.node().fetch_video(cid).await.expect("fetching");
+    let manifest = viewer.node().manifest(&cid).unwrap().expect("the manifest");
+    assert!(viewer.node().video(&cid).unwrap().unwrap().have_content);
+    assert!(viewer.node().storage().usage().unwrap().total_bytes > 2_000_000);
+
+    viewer.node().block_cid(&cid, "not for me").unwrap();
+
+    // Gone from the machine, not merely hidden.
+    assert!(!viewer.node().video(&cid).unwrap().unwrap().have_content);
+    for chunk in &manifest.chunks {
+        assert!(
+            !viewer.node().storage().has(chunk),
+            "a blocked video's chunks should not still be here"
+        );
+    }
+    assert!(
+        !viewer.node().storage().has(&cid),
+        "the manifest is still here"
+    );
+    assert!(viewer.node().storage().usage().unwrap().total_bytes < 100_000);
+
+    publisher.shutdown().await;
+    viewer.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn blocking_a_creator_discards_everything_of_theirs() {
+    let publisher = spawn_node("publisher").await;
+    let viewer = spawn_node("viewer").await;
+    join_via_share_link(&viewer, &publisher).await;
+
+    let mut cids = Vec::new();
+    for name in ["first", "second"] {
+        let source = write_sample_file(publisher.dir.path(), &format!("{name}.mp4"), 512 * 1024);
+        cids.push(publish_until_announced(publisher.node(), &source, name, &[]).await);
+    }
+
+    let viewer_node = viewer.node().clone();
+    wait_until(PROPAGATION_TIMEOUT, || {
+        viewer_node.database().video_count().unwrap_or(0) == 2
+    })
+    .await
+    .expect("both announcements should arrive");
+
+    for cid in &cids {
+        viewer.node().fetch_video(*cid).await.expect("fetching");
+    }
+    assert!(viewer.node().storage().usage().unwrap().total_bytes > 500_000);
+
+    viewer
+        .node()
+        .block_creator(&publisher.node().public_key(), "spam")
+        .unwrap();
+
+    for cid in &cids {
+        assert!(!viewer.node().video(cid).unwrap().unwrap().have_content);
+        assert!(!viewer.node().storage().has(cid));
+    }
+    assert!(viewer.node().storage().usage().unwrap().total_bytes < 100_000);
+
+    publisher.shutdown().await;
+    viewer.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn blocking_one_video_leaves_an_identical_one_playable() {
+    // Identical files share chunks, so discarding one video's blocks must not
+    // quietly break another the user still wants.
+    let node = spawn_node("solo").await;
+    let bytes = write_sample_file(node.dir.path(), "shared.mp4", 300 * 1024);
+    let copy = node.dir.path().join("copy.mp4");
+    std::fs::copy(&bytes, &copy).unwrap();
+
+    // Two videos, same content, different names: two ids, one set of chunks.
+    let unwanted = publish_until_announced(node.node(), &bytes, "Unwanted", &[]).await;
+    let wanted = publish_until_announced(node.node(), &copy, "Wanted", &[]).await;
+    assert_ne!(unwanted, wanted);
+    let shared = node.node().manifest(&wanted).unwrap().unwrap();
+
+    // Both were published here, so blocking leaves them alone — this node may
+    // be the only copy.
+    node.node().block_cid(&unwanted, "not for me").unwrap();
+    for chunk in &shared.chunks {
+        assert!(
+            node.node().storage().has(chunk),
+            "our own content was discarded"
+        );
+    }
+    assert!(node.node().export_video(wanted, None).is_ok());
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn blocking_a_creator_frees_chunks_their_own_videos_share() {
+    // Two identical videos by one creator share a set of chunks. If each
+    // counted as a reason to keep the other's, blocking that creator would
+    // free nothing — the two would protect each other.
+    let publisher = spawn_node("publisher").await;
+    let viewer = spawn_node("viewer").await;
+    join_via_share_link(&viewer, &publisher).await;
+
+    let original = write_sample_file(publisher.dir.path(), "one.mp4", 400 * 1024);
+    let duplicate = publisher.dir.path().join("two.mp4");
+    std::fs::copy(&original, &duplicate).unwrap();
+
+    let first = publish_until_announced(publisher.node(), &original, "One", &[]).await;
+    let second = publish_until_announced(publisher.node(), &duplicate, "Two", &[]).await;
+    assert_ne!(first, second, "different names, so different video ids");
+
+    let viewer_node = viewer.node().clone();
+    wait_until(PROPAGATION_TIMEOUT, || {
+        viewer_node.database().video_count().unwrap_or(0) == 2
+    })
+    .await
+    .expect("both announcements should arrive");
+
+    for cid in [first, second] {
+        viewer.node().fetch_video(cid).await.expect("fetching");
+    }
+    let shared = viewer.node().manifest(&first).unwrap().unwrap();
+    assert_eq!(
+        shared.chunks,
+        viewer.node().manifest(&second).unwrap().unwrap().chunks,
+        "identical content should share its chunks"
+    );
+
+    viewer
+        .node()
+        .block_creator(&publisher.node().public_key(), "spam")
+        .unwrap();
+
+    for chunk in &shared.chunks {
+        assert!(
+            !viewer.node().storage().has(chunk),
+            "chunks shared between two blocked videos were kept"
+        );
+    }
+    assert!(viewer.node().storage().usage().unwrap().total_bytes < 100_000);
+
+    publisher.shutdown().await;
+    viewer.shutdown().await;
+}

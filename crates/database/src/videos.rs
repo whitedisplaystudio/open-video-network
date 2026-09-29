@@ -189,6 +189,29 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Videos attributed to one creator, blocked or not.
+    ///
+    /// Unlike [`Database::videos`] this does not filter blocked content: it
+    /// is used *because* a creator was just blocked.
+    pub fn videos_by_creator(&self, public_key_hex: &str) -> Result<Vec<VideoRecord>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {VIDEO_COLUMNS} FROM known_videos WHERE creator_public_key = ?1"
+        ))?;
+        let rows = stmt.query_map(params![public_key_hex], row_to_video)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Videos whose manifest we hold, so their chunk lists can be consulted.
+    pub fn videos_with_manifest(&self, limit: usize) -> Result<Vec<VideoRecord>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {VIDEO_COLUMNS} FROM known_videos WHERE have_manifest = 1 LIMIT ?1"
+        ))?;
+        let rows = stmt.query_map(params![limit as i64], row_to_video)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn local_videos(&self) -> Result<Vec<VideoRecord>> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(&format!(
@@ -549,6 +572,40 @@ mod tests {
         assert_eq!(page.len(), 2);
         assert_eq!(page[0].title, "Video 4");
         assert_eq!(db.videos(2, 2).unwrap()[0].title, "Video 2");
+    }
+
+    #[test]
+    fn videos_can_be_listed_by_creator_even_when_blocked() {
+        let db = Database::open_in_memory().unwrap();
+        let one = Identity::generate();
+        let two = Identity::generate();
+        let first = announce(&one, "First", &[], b"a");
+        store(&db, &first, false);
+        store(&db, &announce(&one, "Second", &[], b"b"), false);
+        store(&db, &announce(&two, "Elsewhere", &[], b"c"), false);
+
+        let mine = db.videos_by_creator(&one.public_key().to_hex()).unwrap();
+        assert_eq!(mine.len(), 2);
+
+        // Still listed after a block: that is the point of the call.
+        db.block_creator(&one.public_key(), "spam").unwrap();
+        assert_eq!(
+            db.videos_by_creator(&one.public_key().to_hex())
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(db
+            .videos(10, 0)
+            .unwrap()
+            .iter()
+            .all(|v| v.creator != one.public_key().to_hex()));
+        assert!(db.videos_by_creator("nobody").unwrap().is_empty());
+
+        // `videos_with_manifest` only reports what we actually hold.
+        assert!(db.videos_with_manifest(10).unwrap().is_empty());
+        db.set_have_manifest(&first.video_cid, true).unwrap();
+        assert_eq!(db.videos_with_manifest(10).unwrap().len(), 1);
     }
 
     #[test]

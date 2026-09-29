@@ -168,8 +168,8 @@ ourvideo recommendation explain <CID>
 | `ourvideo privacy show` | What this device has recorded about you. |
 | `ourvideo privacy preferences` | The tag weights derived from it. |
 | `ourvideo privacy clear` | Erase both. |
-| `ourvideo block cid <CID>` | Hide one video on this node. |
-| `ourvideo block creator <KEY>` | Hide everything from a creator on this node. |
+| `ourvideo block cid <CID>` | Hide one video here, and discard its data. |
+| `ourvideo block creator <KEY>` | Hide everything from a creator here, and discard it. |
 | `ourvideo block list` | What is hidden. |
 | `ourvideo profile --name "…"` | Publish a display name for your identity. |
 | `ourvideo follow <KEY>` | Follow a creator; their videos rank higher for you. |
@@ -404,9 +404,22 @@ cannot name the types that hold your viewing data. This is
 ## Development
 
 ```bash
-cargo test --workspace      # 317 tests, including the acceptance suite
+cargo test --workspace      # 326 tests, including the acceptance suite
 cargo clippy --workspace --all-targets
 cargo fmt --all
+```
+
+Three suites are skipped by default because they are measured in minutes
+rather than seconds. They are where the failures live that only appear after
+a node has been up for a while:
+
+```bash
+# Millions of malformed messages through every decoder that touches the wire.
+OVN_FUZZ_ITERATIONS=5000000 cargo test -p ovn-node --test untrusted_input --release
+
+# A network left running: publish, fetch, watch, peers arriving and leaving,
+# a cache under constant eviction pressure.
+OVN_SOAK_SECONDS=900 cargo test -p ovn-node --test soak --release -- --ignored --nocapture
 ```
 
 [CI](.github/workflows/ci.yml) runs the same three on GitHub's machines, and

@@ -86,6 +86,15 @@ connection.
 
 ### Parsing
 
+Every decoder between a stranger's bytes and this node's state is fuzzed:
+announcements, profiles, descriptors, envelopes, manifests, content
+identifiers, share links and `Range` headers. Valid messages are mutated —
+bits flipped, lengths forged, bodies truncated and spliced — and fed back in,
+alongside pure noise. The contract asserted is narrow and absolute: never
+panic, never hang, never allocate without bound. Returning an error is always
+an acceptable answer; crashing is not, because a peer that can crash one node
+can crash every node. See `crates/node/tests/untrusted_input.rs`.
+
 CBOR is parsed by `ciborium`, a safe-Rust decoder. Malformed input returns an
 error; it does not panic and does not allocate on a declared length. Content
 identifiers are validated for version, multihash, digest length and codec, and

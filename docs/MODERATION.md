@@ -40,11 +40,21 @@ Blocking has three effects:
    recommendations.
 2. New announcements from a blocked creator are discarded on arrival — they
    are never stored.
-3. Your node stops serving blocked content to other peers: a block request
-   for it is answered `Refused`.
+3. **The content is discarded from this machine.** Not hidden: removed. Your
+   node then has nothing to serve, so it stops distributing it.
 
-That third point matters. Blocking is not only about what you see; it is also
+That third point matters, and it is why blocking deletes rather than hides.
+Refusing requests would not have been enough: a block is recorded against a
+content id, but a peer asking for a chunk never says which video the chunk
+belongs to, so the only way to be certain this node stops serving something
+is for it to stop having it. Blocking is not only about what you see; it is
 about not participating in distributing something.
+
+Two things are left alone. Content you published yourself is kept, because
+this node may be the only copy and losing it would take the video off the
+network rather than off your screen. And chunks that an identical video you
+still want also uses are kept, so blocking one video cannot quietly break
+another.
 
 ## What V1 does not do
 

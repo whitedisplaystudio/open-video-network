@@ -29,6 +29,11 @@ impl TestNode {
 /// off, no bootstrap peers. Nothing outside this process is involved, which
 /// is the point of Principle 1.
 pub async fn spawn_node(name: &str) -> TestNode {
+    spawn_node_with(name, |_| {}).await
+}
+
+/// A node with the usual test defaults, then whatever `adjust` changes.
+pub async fn spawn_node_with(name: &str, adjust: impl FnOnce(&mut NodeConfig)) -> TestNode {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut config = NodeConfig::new(dir.path())
         .with_p2p_port(0)
@@ -37,6 +42,7 @@ pub async fn spawn_node(name: &str) -> TestNode {
     config.network.enable_mdns = false;
     // Loopback only: a test must not touch the machine's real interfaces.
     config.network.listen_addrs = vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()];
+    adjust(&mut config);
     let running = start(config).await.expect("node starts");
     // Wait for the swarm to report an address before anyone tries to share it.
     wait_until(Duration::from_secs(10), || {
@@ -91,8 +97,26 @@ where
 
 /// Write a deterministic, incompressible-ish file of `size` bytes.
 pub fn write_sample_file(dir: &std::path::Path, name: &str, size: usize) -> PathBuf {
+    write_seeded_file(dir, name, size, 0)
+}
+
+/// The same, but with content that differs per `seed`.
+///
+/// Two files of the same length and the same contents are one video as far
+/// as the block store is concerned — content addressing deduplicates them.
+/// That is the right behaviour and a trap for a test that means to fill a
+/// cache.
+pub fn write_seeded_file(dir: &std::path::Path, name: &str, size: usize, seed: u64) -> PathBuf {
     let path = dir.join(name);
-    let bytes: Vec<u8> = (0..size).map(|i| ((i * 31 + 7) % 251) as u8).collect();
+    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let bytes: Vec<u8> = (0..size)
+        .map(|_| {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as u8
+        })
+        .collect();
     std::fs::write(&path, bytes).expect("write sample file");
     path
 }

@@ -822,16 +822,114 @@ impl Node {
 
     // ---------------------------------------------------------- moderation
 
+    /// Hide a video here, and stop holding it.
+    ///
+    /// Section 33 says blocking is not only about what you see but about not
+    /// participating in distributing something. Refusing requests would only
+    /// half do that — a block arrives as a content id, and a peer asking for
+    /// a chunk never mentions which video it belongs to, so the only way to
+    /// be sure this node stops serving it is to stop having it.
     pub fn block_cid(&self, cid: &ContentId, reason: &str) -> Result<()> {
-        Ok(self.inner.db.block_cid(cid, reason)?)
+        self.inner.db.block_cid(cid, reason)?;
+        if let Err(e) = self.discard_content(cid) {
+            tracing::warn!(%cid, error = %e, "blocked, but could not discard the content");
+        }
+        Ok(())
+    }
+
+    /// Discard a video's blocks, keeping any a video we still want shares.
+    ///
+    /// Content we published ourselves is left alone: this node may be the
+    /// only copy, and losing it would take the video off the network rather
+    /// than off this screen.
+    fn discard_content(&self, cid: &ContentId) -> Result<u64> {
+        let record = self.inner.db.video(cid)?;
+        if record.as_ref().is_some_and(|v| v.is_local) {
+            tracing::debug!(%cid, "keeping content this node published");
+            return Ok(0);
+        }
+
+        let Some(manifest) = self.manifest(cid)? else {
+            self.inner.db.set_have_manifest(cid, false)?;
+            self.inner.db.set_have_content(cid, false)?;
+            return Ok(0);
+        };
+
+        // Chunks are shared between identical videos, so only drop the ones
+        // nothing else we hold refers to. The bound keeps a block operation
+        // from turning into a scan of everything on a large node; beyond it
+        // we keep the chunk, which is the safe way to be wrong.
+        const MANIFESTS_TO_CONSULT: usize = 4_096;
+        let mut still_wanted: HashSet<ContentId> = HashSet::new();
+        let discarding = cid.to_string();
+        for other in self.inner.db.videos_with_manifest(MANIFESTS_TO_CONSULT)? {
+            if other.cid == discarding {
+                continue;
+            }
+            // Something blocked does not get to protect anything. Two videos
+            // by one creator can share chunks, and if each counted as a
+            // reason to keep the other's, blocking that creator would free
+            // nothing at all.
+            if self.inner.db.is_creator_blocked_hex(&other.creator)? {
+                continue;
+            }
+            let Ok(other_cid) = ContentId::parse(&other.cid) else {
+                continue;
+            };
+            if self.inner.db.is_cid_blocked(&other_cid)? {
+                continue;
+            }
+            if let Ok(Some(other_manifest)) = self.manifest(&other_cid) {
+                still_wanted.extend(other_manifest.chunks);
+            }
+        }
+
+        let mut freed = 0u64;
+        for chunk in &manifest.chunks {
+            if still_wanted.contains(chunk) {
+                continue;
+            }
+            freed += self.inner.storage.store().block_size(chunk).unwrap_or(0);
+            self.inner.storage.store().remove(chunk)?;
+            self.inner.db.forget_cached(chunk)?;
+        }
+        // The manifest itself, and the thumbnail, which nothing else needs.
+        for block in [
+            Some(*cid),
+            record
+                .and_then(|r| r.thumbnail_cid)
+                .and_then(|t| ContentId::parse(&t).ok()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            freed += self.inner.storage.store().block_size(&block).unwrap_or(0);
+            self.inner.storage.store().remove(&block)?;
+            self.inner.db.forget_cached(&block)?;
+        }
+
+        self.inner.db.set_have_manifest(cid, false)?;
+        self.inner.db.set_have_content(cid, false)?;
+        tracing::info!(%cid, freed, "discarded blocked content");
+        Ok(freed)
     }
 
     pub fn unblock_cid(&self, cid: &ContentId) -> Result<bool> {
         Ok(self.inner.db.unblock_cid(cid)?)
     }
 
+    /// Hide everything from a creator here, and stop holding any of it.
     pub fn block_creator(&self, key: &PublicKey, reason: &str) -> Result<()> {
-        Ok(self.inner.db.block_creator(key, reason)?)
+        self.inner.db.block_creator(key, reason)?;
+        for video in self.inner.db.videos_by_creator(&key.to_hex())? {
+            let Ok(cid) = ContentId::parse(&video.cid) else {
+                continue;
+            };
+            if let Err(e) = self.discard_content(&cid) {
+                tracing::warn!(%cid, error = %e, "blocked, but could not discard the content");
+            }
+        }
+        Ok(())
     }
 
     pub fn unblock_creator(&self, key: &PublicKey) -> Result<bool> {

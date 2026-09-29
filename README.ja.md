@@ -154,7 +154,7 @@ ourvideo recommendation explain <CID>   # なぜその順位なのか
 | `ourvideo recommendation list` / `explain <CID>` | フィード / その理由 |
 | `ourvideo watch <CID> --seconds N` | 視聴記録（端末内のみ） |
 | `ourvideo privacy show` / `preferences` / `clear` | 端末内データの確認と消去 |
-| `ourvideo block cid` / `creator` / `list` | ローカルでの非表示 |
+| `ourvideo block cid` / `creator` / `list` | ローカルでの非表示（データも破棄します） |
 | `ourvideo profile --name "…"` | 表示名の公開 |
 | `ourvideo follow <KEY>` | Creator のフォロー |
 
@@ -280,9 +280,20 @@ FFmpeg が無い場合はサムネイルが付かないだけで、公開は成�
 ## 開発
 
 ```bash
-cargo test --workspace      # 317 テスト（受け入れテスト A〜H を含む）
+cargo test --workspace      # 326 テスト（受け入れテスト A〜H を含む）
 cargo clippy --workspace --all-targets
 cargo fmt --all
+```
+
+長時間かかる3つのテストは既定でスキップされます。ノードが動き続けたときにしか
+現れない種類の不具合を見つけるためのものです。
+
+```bash
+# ワイヤに触れる全パーサへ、壊れたメッセージを数百万件通す
+OVN_FUZZ_ITERATIONS=5000000 cargo test -p ovn-node --test untrusted_input --release
+
+# ネットワークを動かし続ける（投稿・取得・視聴、ピアの出入り、キャッシュの破棄）
+OVN_SOAK_SECONDS=900 cargo test -p ovn-node --test soak --release -- --ignored --nocapture
 ```
 
 [CI](.github/workflows/ci.yml) は GitHub のマシン上で同じ3つを実行しますが、
