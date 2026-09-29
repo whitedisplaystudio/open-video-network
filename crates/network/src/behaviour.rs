@@ -3,7 +3,10 @@
 use std::time::Duration;
 
 use libp2p::swarm::behaviour::toggle::Toggle;
-use libp2p::{connection_limits, gossipsub, identify, kad, mdns, ping, request_response};
+use libp2p::{
+    autonat, connection_limits, dcutr, gossipsub, identify, kad, mdns, ping, relay,
+    request_response, upnp,
+};
 use libp2p::{PeerId, StreamProtocol};
 use serde::{Deserialize, Serialize};
 
@@ -42,10 +45,37 @@ pub(crate) struct Behaviour {
     pub identify: identify::Behaviour,
     pub ping: ping::Behaviour,
     pub blocks: request_response::cbor::Behaviour<BlockRequest, BlockResponse>,
+
+    // ---- getting through a NAT (section 13, and Principle 1 in practice)
+    //
+    // Most people run this from home, behind a router that gives them no
+    // address anyone else can dial. Without these, such a node can fetch but
+    // can never serve, and the network quietly comes to depend on whoever
+    // happens to have a public address.
+    /// Ask the router to forward our port. When it works, nothing else here
+    /// is needed.
+    pub upnp: Toggle<upnp::tokio::Behaviour>,
+    /// Find out whether we are actually reachable, by having other peers try.
+    pub autonat_client: autonat::v2::client::Behaviour,
+    /// Answer that question for others.
+    pub autonat_server: autonat::v2::server::Behaviour,
+    /// Reserve a slot on someone reachable, so we have an address to give out.
+    pub relay_client: relay::client::Behaviour,
+    /// Be that someone, when we are reachable ourselves. Every reachable node
+    /// relays; none of them is special, which is what keeps this from
+    /// becoming infrastructure.
+    pub relay_server: Toggle<relay::Behaviour>,
+    /// Upgrade a relayed connection to a direct one by punching through both
+    /// routers at once.
+    pub dcutr: dcutr::Behaviour,
 }
 
 impl Behaviour {
-    pub(crate) fn new(keypair: &libp2p::identity::Keypair, config: &NetworkConfig) -> Result<Self> {
+    pub(crate) fn new(
+        keypair: &libp2p::identity::Keypair,
+        config: &NetworkConfig,
+        relay_client: relay::client::Behaviour,
+    ) -> Result<Self> {
         let peer_id = PeerId::from(keypair.public());
 
         let limits = connection_limits::Behaviour::new(
@@ -117,6 +147,27 @@ impl Behaviour {
             request_response::Config::default().with_request_timeout(Duration::from_secs(30)),
         );
 
+        let upnp = Toggle::from(config.enable_upnp.then(upnp::tokio::Behaviour::default));
+
+        // Relaying for other people costs bandwidth, so the limits are
+        // deliberately modest: enough to help someone get a connection
+        // established and hole-punched, not enough to be used as a proxy.
+        let relay_server = Toggle::from(config.enable_relay_server.then(|| {
+            relay::Behaviour::new(
+                peer_id,
+                relay::Config {
+                    max_reservations: 64,
+                    max_reservations_per_peer: 2,
+                    reservation_duration: Duration::from_secs(60 * 60),
+                    max_circuits: 32,
+                    max_circuits_per_peer: 4,
+                    max_circuit_duration: Duration::from_secs(10 * 60),
+                    max_circuit_bytes: 256 * 1024 * 1024,
+                    ..Default::default()
+                },
+            )
+        }));
+
         Ok(Self {
             limits,
             kad,
@@ -125,8 +176,22 @@ impl Behaviour {
             identify,
             ping,
             blocks,
+            upnp,
+            autonat_client: autonat::v2::client::Behaviour::default(),
+            autonat_server: autonat::v2::server::Behaviour::default(),
+            relay_client,
+            relay_server,
+            dcutr: dcutr::Behaviour::new(peer_id),
         })
     }
+}
+
+/// Does this peer offer to relay for others?
+///
+/// Learned from identify, which is how we find a relay without anyone
+/// publishing a list of them.
+pub(crate) fn speaks_relay_hop(protocols: &[StreamProtocol]) -> bool {
+    protocols.contains(&relay::HOP_PROTOCOL_NAME)
 }
 
 /// Kademlia provider key for a content id.

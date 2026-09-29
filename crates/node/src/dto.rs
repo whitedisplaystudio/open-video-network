@@ -38,6 +38,8 @@ pub struct StatusDto {
     pub providing: usize,
     pub cache: CacheSummary,
     pub cache_limit_bytes: u64,
+    pub reachability: String,
+    pub relays: usize,
 }
 
 impl From<NodeStatus> for StatusDto {
@@ -58,6 +60,8 @@ impl From<NodeStatus> for StatusDto {
             providing: s.providing,
             cache: s.cache,
             cache_limit_bytes: s.cache_limit_bytes,
+            reachability: s.reachability,
+            relays: s.relays,
         }
     }
 }

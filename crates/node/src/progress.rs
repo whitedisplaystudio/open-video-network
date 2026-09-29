@@ -46,6 +46,12 @@ pub enum NodeEvent {
     PublishStarted { file_name: String },
     #[serde(rename_all = "camelCase")]
     PublishCompleted { cid: String, title: String },
+    #[serde(rename_all = "camelCase")]
+    ReachabilityChanged { reachability: String },
+    #[serde(rename_all = "camelCase")]
+    RelayReserved { relay: String, address: String },
+    #[serde(rename_all = "camelCase")]
+    HolePunched { peer_id: String },
     /// The node is stopping. Listeners should close: an event stream never
     /// ends on its own, and a connection that never closes would hold up a
     /// graceful shutdown indefinitely.
@@ -160,6 +166,16 @@ mod tests {
                 title: "t".into(),
             },
             NodeEvent::ShuttingDown,
+            NodeEvent::ReachabilityChanged {
+                reachability: "public".into(),
+            },
+            NodeEvent::RelayReserved {
+                relay: "p".into(),
+                address: "/ip4/192.0.2.1".into(),
+            },
+            NodeEvent::HolePunched {
+                peer_id: "p".into(),
+            },
         ];
         let permitted = [
             "type",
@@ -172,6 +188,9 @@ mod tests {
             "bytesFetched",
             "error",
             "fileName",
+            "reachability",
+            "relay",
+            "address",
         ];
         for event in samples {
             let value = serde_json::to_value(&event).unwrap();

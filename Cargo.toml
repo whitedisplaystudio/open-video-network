@@ -47,6 +47,7 @@ libp2p = { version = "0.57", features = [
     "tokio", "tcp", "quic", "dns", "noise", "yamux",
     "gossipsub", "kad", "mdns", "identify", "ping",
     "request-response", "cbor", "macros", "ed25519",
+    "autonat", "relay", "dcutr", "upnp",
 ] }
 libp2p-identity = { version = "0.3", features = ["ed25519", "peerid", "rand"] }
 cid = "0.11"

@@ -20,6 +20,22 @@ pub struct NetworkConfig {
     pub bootstrap_addrs: Vec<Multiaddr>,
     /// Participate in the DHT as a server rather than only querying it.
     pub dht_server_mode: bool,
+    /// Ask the router to forward our port, so we are reachable without a
+    /// relay at all.
+    pub enable_upnp: bool,
+    /// Relay for peers that cannot be reached directly, when we can be.
+    ///
+    /// On by default: a network where only a few volunteers relay is a
+    /// network with a dependency, which is exactly what Principle 1 forbids.
+    /// A node that is itself unreachable never gets asked, so leaving this on
+    /// costs nothing.
+    pub enable_relay_server: bool,
+    /// How many relays to hold a reservation with when we are unreachable.
+    pub max_relay_reservations: usize,
+    /// Addresses we know we are reachable on, for an operator who has
+    /// forwarded a port themselves. Saves waiting to be told by other peers,
+    /// and stops us taking a relay slot we do not need.
+    pub external_addrs: Vec<Multiaddr>,
     /// Hard ceiling on established connections.
     pub max_connections: u32,
     /// Ceiling on connections from a single peer.
@@ -42,6 +58,10 @@ impl Default for NetworkConfig {
             enable_mdns: true,
             bootstrap_addrs: Vec::new(),
             dht_server_mode: true,
+            enable_upnp: true,
+            enable_relay_server: true,
+            max_relay_reservations: 2,
+            external_addrs: Vec::new(),
             max_connections: 256,
             max_connections_per_peer: 4,
             gossip_rate_per_minute: 240,
@@ -84,5 +104,15 @@ mod tests {
     fn a_default_config_needs_no_bootstrap_peer() {
         // Principle 1: the network must form without any operator-run node.
         assert!(NetworkConfig::default().bootstrap_addrs.is_empty());
+    }
+
+    #[test]
+    fn a_default_node_helps_others_through_their_nat() {
+        // If relaying were opt-in, the few who opted in would become
+        // infrastructure the rest depended on.
+        let config = NetworkConfig::default();
+        assert!(config.enable_relay_server);
+        assert!(config.enable_upnp);
+        assert!(config.max_relay_reservations > 0);
     }
 }

@@ -86,6 +86,35 @@ async fn handle(node: &Node, event: NetworkEvent) {
                 tracing::debug!(peer = %from, reason, "dropped a profile update");
             }
         }
+        NetworkEvent::ReachabilityChanged { reachability } => {
+            // Worth saying plainly: it decides whether this node can serve
+            // content or only consume it.
+            match reachability {
+                ovn_network::Reachability::Public => {
+                    tracing::info!("other peers can reach this node directly")
+                }
+                ovn_network::Reachability::Private => tracing::info!(
+                    "this node is behind a router; it will ask a peer to relay for it"
+                ),
+                ovn_network::Reachability::Unknown => {}
+            }
+            node.emit(NodeEvent::ReachabilityChanged {
+                reachability: reachability.as_str().to_string(),
+            });
+        }
+        NetworkEvent::RelayReserved { relay, address } => {
+            tracing::info!(relay = %relay, %address, "a peer is relaying for this node");
+            node.emit(NodeEvent::RelayReserved {
+                relay: relay.to_base58(),
+                address: address.to_string(),
+            });
+        }
+        NetworkEvent::HolePunched { peer } => {
+            tracing::info!(peer = %peer.to_base58(), "connected directly after a relayed start");
+            node.emit(NodeEvent::HolePunched {
+                peer_id: peer.to_base58(),
+            });
+        }
         NetworkEvent::BlockRequested {
             peer,
             cid,

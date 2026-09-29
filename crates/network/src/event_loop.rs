@@ -1,19 +1,32 @@
 //! The swarm task: one place where all libp2p state lives.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use futures::StreamExt;
+use libp2p::core::transport::ListenerId;
+use libp2p::multiaddr::Protocol;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{gossipsub, identify, kad, mdns, request_response};
+use libp2p::{dcutr, gossipsub, identify, kad, mdns, relay, request_response, upnp};
 use libp2p::{Multiaddr, PeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
 use ovn_protocol::{ContentId, TOPIC_PROFILE_UPDATE, TOPIC_VIDEO_ANNOUNCE};
 
-use crate::behaviour::{provider_key, Behaviour, BehaviourEvent, BlockRequest, BlockResponse};
-use crate::handle::{BlockResponder, Command, DiscoverySource, NetworkEvent, NetworkStatus};
+use crate::behaviour::{
+    provider_key, speaks_relay_hop, Behaviour, BehaviourEvent, BlockRequest, BlockResponse,
+};
+use crate::handle::{
+    BlockResponder, Command, DiscoverySource, NetworkEvent, NetworkStatus, Reachability,
+};
 use crate::rate_limit::RateLimiter;
 use crate::{NetworkConfig, NetworkError, Result};
+
+/// How long to wait for a dial before telling the caller it did not work.
+const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Someone waiting on a dial, and when we stop waiting on their behalf.
+type PendingDial = (oneshot::Sender<Result<PeerId>>, tokio::time::Instant);
 
 pub(crate) struct EventLoop {
     swarm: Swarm<Behaviour>,
@@ -26,10 +39,16 @@ pub(crate) struct EventLoop {
     announce_topic: gossipsub::IdentTopic,
     profile_topic: gossipsub::IdentTopic,
 
-    pending_dials: HashMap<PeerId, Vec<oneshot::Sender<Result<PeerId>>>>,
+    /// Dials waiting on a connection, with the moment we give up on them.
+    pending_dials: HashMap<PeerId, Vec<PendingDial>>,
     pending_providers: HashMap<kad::QueryId, (oneshot::Sender<Vec<PeerId>>, HashSet<PeerId>)>,
     pending_blocks: HashMap<request_response::OutboundRequestId, oneshot::Sender<Result<Vec<u8>>>>,
     providing: HashSet<ContentId>,
+
+    /// Whether anyone can dial us, as far as we have been told.
+    reachability: Reachability,
+    /// Relays holding a slot for us, and the listener each one created.
+    relays: HashMap<PeerId, ListenerId>,
 
     gossip_limiter: RateLimiter,
     block_limiter: RateLimiter,
@@ -43,6 +62,7 @@ impl EventLoop {
         command_sender: mpsc::Sender<Command>,
         events: mpsc::Sender<NetworkEvent>,
     ) -> Self {
+        let config_external = !config.external_addrs.is_empty();
         Self {
             gossip_limiter: RateLimiter::per_minute(config.gossip_rate_per_minute),
             block_limiter: RateLimiter::per_minute(config.block_request_rate_per_minute),
@@ -57,11 +77,97 @@ impl EventLoop {
             pending_providers: HashMap::new(),
             pending_blocks: HashMap::new(),
             providing: HashSet::new(),
+            // An operator who passed `--external-addr` has answered the
+            // question already.
+            reachability: if config_external {
+                Reachability::Public
+            } else {
+                Reachability::Unknown
+            },
+            relays: HashMap::new(),
+        }
+    }
+
+    /// Give up on dials that have taken too long, so a caller is never left
+    /// waiting on an answer that is not coming.
+    fn expire_pending_dials(&mut self) {
+        let now = tokio::time::Instant::now();
+        self.pending_dials.retain(|peer, waiting| {
+            waiting.retain(|(_, deadline)| *deadline > now);
+            if waiting.is_empty() {
+                tracing::debug!(%peer, "giving up on a dial that never resolved");
+            }
+            !waiting.is_empty()
+        });
+    }
+
+    /// Record a change in whether others can dial us, and tell the node.
+    fn set_reachability(&mut self, reachability: Reachability) {
+        if self.reachability == reachability {
+            return;
+        }
+        tracing::info!(
+            from = self.reachability.as_str(),
+            to = reachability.as_str(),
+            "reachability changed"
+        );
+        self.reachability = reachability;
+
+        // Relay capacity is somebody else's bandwidth. Once other peers can
+        // dial us directly, give it back to whoever still needs it.
+        if reachability == Reachability::Public && !self.relays.is_empty() {
+            for (peer, listener) in self.relays.drain() {
+                tracing::info!(%peer, "no longer need a relay; releasing the slot");
+                self.swarm.remove_listener(listener);
+            }
+        }
+
+        self.emit(NetworkEvent::ReachabilityChanged { reachability });
+    }
+
+    /// Ask a peer that offers to relay for a slot, so that we have an address
+    /// others can dial.
+    ///
+    /// Only worth doing while we are unreachable ourselves; a node others can
+    /// dial directly gains nothing from a relay and should leave the capacity
+    /// for someone who needs it.
+    fn reserve_relay(&mut self, peer: PeerId, addresses: &[Multiaddr]) {
+        if self.reachability == Reachability::Public
+            || self.relays.contains_key(&peer)
+            || self.relays.len() >= self.config.max_relay_reservations
+        {
+            return;
+        }
+        let Some(address) = addresses.iter().find(|a| is_dialable(a)) else {
+            return;
+        };
+
+        // `<their address>/p2p/<them>/p2p-circuit` is an address on their
+        // relay; listening on it is how we ask for the slot.
+        let mut circuit = address.clone();
+        if extract_peer_id(&circuit).is_none() {
+            circuit.push(Protocol::P2p(peer));
+        }
+        circuit.push(Protocol::P2pCircuit);
+
+        match self.swarm.listen_on(circuit.clone()) {
+            Ok(listener) => {
+                tracing::info!(%peer, %circuit, "asking a peer to relay for us");
+                self.relays.insert(peer, listener);
+            }
+            Err(e) => {
+                tracing::debug!(%peer, %circuit, error = %e, "could not ask for a relay slot")
+            }
         }
     }
 
     pub(crate) async fn run(mut self) {
         let mut bootstrap_timer = tokio::time::interval(self.config.bootstrap_interval);
+        // A dial can fail in ways the swarm never reports against the peer we
+        // asked for — a relayed address whose relay refuses, say. Without a
+        // deadline the caller waits forever, and `ourvideo peer add` never
+        // returns.
+        let mut dial_sweep = tokio::time::interval(Duration::from_secs(2));
         // The first tick fires immediately; the initial bootstrap is driven by
         // the node once it has dialled its known peers, so skip it here.
         bootstrap_timer.tick().await;
@@ -79,6 +185,9 @@ impl EventLoop {
                 }
                 _ = bootstrap_timer.tick() => {
                     let _ = self.swarm.behaviour_mut().kad.bootstrap();
+                }
+                _ = dial_sweep.tick() => {
+                    self.expire_pending_dials();
                 }
             }
         }
@@ -101,6 +210,13 @@ impl EventLoop {
             Command::Dial { addr, reply } => self.dial(addr, reply),
             Command::AddPeerAddress { peer, addr } => {
                 self.swarm.behaviour_mut().kad.add_address(&peer, addr);
+            }
+            Command::AddExternalAddress { addr } => {
+                // `Swarm::add_external_address` tells the behaviours but
+                // produces no event of its own, so record the consequence
+                // here: we now know we are reachable.
+                self.swarm.add_external_address(addr);
+                self.set_reachability(Reachability::Public);
             }
             Command::Publish { topic, data, reply } => {
                 let topic = if topic == TOPIC_VIDEO_ANNOUNCE {
@@ -172,6 +288,8 @@ impl EventLoop {
                         .map(|bucket| bucket.num_entries())
                         .sum(),
                     providing: self.providing.len(),
+                    reachability: self.reachability,
+                    relays: self.relays.keys().copied().collect(),
                 };
                 let _ = reply.send(status);
             }
@@ -185,10 +303,17 @@ impl EventLoop {
     fn dial(&mut self, addr: Multiaddr, reply: oneshot::Sender<Result<PeerId>>) {
         // A multiaddr that names its peer lets us report success precisely;
         // without one we still dial, but cannot match the reply to a peer id.
-        let peer = extract_peer_id(&addr);
+        //
+        // A relayed address names two: the relay, then the peer we actually
+        // want. The last one is the destination.
+        let peer = dial_target(&addr);
         match self.swarm.dial(addr.clone()) {
             Ok(()) => match peer {
-                Some(peer) => self.pending_dials.entry(peer).or_default().push(reply),
+                Some(peer) => self
+                    .pending_dials
+                    .entry(peer)
+                    .or_default()
+                    .push((reply, tokio::time::Instant::now() + DIAL_TIMEOUT)),
                 None => {
                     let _ = reply.send(Err(NetworkError::Dial(
                         "the address does not name a peer id".to_string(),
@@ -207,11 +332,39 @@ impl EventLoop {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => {
                 tracing::info!(%address, "listening");
+                // A circuit address only exists once a relay has accepted, so
+                // this is the first moment we can report one.
+                if address.iter().any(|p| matches!(p, Protocol::P2pCircuit)) {
+                    if let Some(relay) = extract_peer_id(&address) {
+                        self.emit(NetworkEvent::RelayReserved {
+                            relay,
+                            address: address.clone(),
+                        });
+                    }
+                }
                 self.emit(NetworkEvent::Listening(address));
+            }
+            // An address another peer has actually reached us on.
+            SwarmEvent::ExternalAddrConfirmed { address } => {
+                // A relayed address is somewhere others can reach us, but it
+                // is not us being reachable: our router still refuses
+                // everything. Treating it as reachable would stop us looking
+                // for more relays and would have us offer to relay for
+                // others, which we cannot do.
+                let relayed = address.iter().any(|p| matches!(p, Protocol::P2pCircuit));
+                tracing::info!(%address, relayed, "confirmed reachable from outside");
+                if !relayed {
+                    self.set_reachability(Reachability::Public);
+                }
+                self.emit(NetworkEvent::Listening(address));
+            }
+            SwarmEvent::ListenerClosed { listener_id, .. } => {
+                // A relay slot we lost; make room to find another.
+                self.relays.retain(|_, id| *id != listener_id);
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 if let Some(waiting) = self.pending_dials.remove(&peer_id) {
-                    for reply in waiting {
+                    for (reply, _) in waiting {
                         let _ = reply.send(Ok(peer_id));
                     }
                 }
@@ -232,7 +385,7 @@ impl EventLoop {
                 ..
             } => {
                 if let Some(waiting) = self.pending_dials.remove(&peer_id) {
-                    for reply in waiting {
+                    for (reply, _) in waiting {
                         let _ = reply.send(Err(NetworkError::Dial(error.to_string())));
                     }
                 }
@@ -261,6 +414,44 @@ impl EventLoop {
                     });
                 }
             }
+            BehaviourEvent::Upnp(upnp::Event::NewExternalAddr { external_addr, .. }) => {
+                // The router opened a port for us, which beats a relay.
+                tracing::info!(address = %external_addr, "the router forwarded a port for us");
+                self.swarm.add_external_address(external_addr);
+                self.set_reachability(Reachability::Public);
+            }
+            BehaviourEvent::Upnp(upnp::Event::GatewayNotFound) => {
+                tracing::debug!("no router willing to forward a port; a relay may be needed");
+            }
+            BehaviourEvent::AutonatClient(event) => {
+                // A failed probe means nobody could dial the address we
+                // offered, so we are behind something.
+                if event.result.is_err() && self.reachability != Reachability::Public {
+                    self.set_reachability(Reachability::Private);
+                }
+            }
+            BehaviourEvent::RelayClient(relay::client::Event::ReservationReqAccepted {
+                relay_peer_id,
+                ..
+            }) => {
+                // The address it gives us arrives separately, as a listen
+                // address; that is where the event carrying it is emitted.
+                tracing::info!(relay = %relay_peer_id, "a peer agreed to relay for us");
+            }
+            BehaviourEvent::Dcutr(dcutr::Event {
+                remote_peer_id,
+                result,
+            }) => match result {
+                Ok(_) => {
+                    tracing::info!(peer = %remote_peer_id, "punched a hole through both routers");
+                    self.emit(NetworkEvent::HolePunched {
+                        peer: remote_peer_id,
+                    });
+                }
+                Err(e) => {
+                    tracing::debug!(peer = %remote_peer_id, error = %e, "hole punching failed; staying on the relay");
+                }
+            },
             BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. }) => {
                 // Only route peers that speak our Kademlia protocol.
                 let speaks_kad = info
@@ -275,6 +466,13 @@ impl EventLoop {
                             .add_address(&peer_id, addr.clone());
                     }
                 }
+                // A peer that relays is how an unreachable node gets an
+                // address at all. Nobody publishes a list of them; we notice
+                // as we meet them.
+                if speaks_relay_hop(&info.protocols) {
+                    self.reserve_relay(peer_id, &info.listen_addrs);
+                }
+
                 self.emit(NetworkEvent::PeerDiscovered {
                     peer: peer_id,
                     addresses: info.listen_addrs,
@@ -398,12 +596,43 @@ impl EventLoop {
     }
 }
 
-/// Pull the `/p2p/<peer id>` component out of a multiaddr, if present.
+/// Is this an address we could actually dial, rather than a placeholder or
+/// an address that only means something on the machine that reported it?
+fn is_dialable(addr: &Multiaddr) -> bool {
+    // A relayed address cannot itself host a relay, and an unspecified
+    // address is a listener's wildcard rather than somewhere to connect.
+    if addr.iter().any(|p| matches!(p, Protocol::P2pCircuit)) {
+        return false;
+    }
+    addr.iter().all(|p| match p {
+        Protocol::Ip4(ip) => !ip.is_unspecified(),
+        Protocol::Ip6(ip) => !ip.is_unspecified(),
+        _ => true,
+    })
+}
+
+/// Pull the first `/p2p/<peer id>` component out of a multiaddr, if present.
+///
+/// For a plain address that is the peer; for a relayed one it is the relay,
+/// which is what the routing table wants to know about.
 pub(crate) fn extract_peer_id(addr: &Multiaddr) -> Option<PeerId> {
     addr.iter().find_map(|p| match p {
-        libp2p::multiaddr::Protocol::P2p(peer) => Some(peer),
+        Protocol::P2p(peer) => Some(peer),
         _ => None,
     })
+}
+
+/// The peer a dial is actually trying to reach.
+///
+/// `/ip4/…/p2p/<relay>/p2p-circuit/p2p/<destination>` names two peers; the
+/// connection we are waiting for is with the last.
+fn dial_target(addr: &Multiaddr) -> Option<PeerId> {
+    addr.iter()
+        .filter_map(|p| match p {
+            Protocol::P2p(peer) => Some(peer),
+            _ => None,
+        })
+        .last()
 }
 
 #[cfg(test)]
@@ -417,6 +646,44 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(extract_peer_id(&addr), Some(peer));
+    }
+
+    #[test]
+    fn a_relayed_dial_waits_for_the_destination_not_the_relay() {
+        let relay = PeerId::random();
+        let destination = PeerId::random();
+        let addr: Multiaddr =
+            format!("/ip4/192.0.2.1/udp/4800/quic-v1/p2p/{relay}/p2p-circuit/p2p/{destination}")
+                .parse()
+                .unwrap();
+        assert_eq!(dial_target(&addr), Some(destination));
+        // The routing table still wants to know where the relay is.
+        assert_eq!(extract_peer_id(&addr), Some(relay));
+
+        // A plain address names one peer, and both agree on it.
+        let plain: Multiaddr = format!("/ip4/192.0.2.1/udp/4800/quic-v1/p2p/{destination}")
+            .parse()
+            .unwrap();
+        assert_eq!(dial_target(&plain), Some(destination));
+        assert_eq!(extract_peer_id(&plain), Some(destination));
+    }
+
+    #[test]
+    fn a_wildcard_or_relayed_address_is_not_somewhere_to_dial() {
+        assert!(is_dialable(
+            &"/ip4/192.0.2.1/udp/4800/quic-v1".parse().unwrap()
+        ));
+        assert!(is_dialable(&"/ip4/127.0.0.1/tcp/4800".parse().unwrap()));
+        // A listener's wildcard means "every interface here", not an address.
+        assert!(!is_dialable(&"/ip4/0.0.0.0/tcp/4800".parse().unwrap()));
+        assert!(!is_dialable(&"/ip6/::/udp/4800/quic-v1".parse().unwrap()));
+        // A relay cannot be reached through a relay.
+        let peer = PeerId::random();
+        assert!(!is_dialable(
+            &format!("/ip4/192.0.2.1/tcp/4800/p2p/{peer}/p2p-circuit")
+                .parse()
+                .unwrap()
+        ));
     }
 
     #[test]

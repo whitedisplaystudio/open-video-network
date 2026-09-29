@@ -160,8 +160,11 @@ pub async fn start(config: NodeConfig) -> Result<RunningNode> {
     let db = Database::open(config.database_path())?;
     let api_token = load_or_create_api_token(&config.api_token_path())?;
 
-    let (network, network_events, network_task) =
-        ovn_network::spawn(&identity, config.network.clone())?;
+    let mut network_config = config.network.clone();
+    network_config
+        .external_addrs
+        .extend(config.external_addrs.iter().cloned());
+    let (network, network_events, network_task) = ovn_network::spawn(&identity, network_config)?;
 
     let inner = node::build_inner(config, identity, db, network, api_token)?;
     let node = Node::new(inner);

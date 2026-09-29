@@ -124,6 +124,12 @@ pub struct NodeStatus {
     pub providing: usize,
     pub cache: CacheSummary,
     pub cache_limit_bytes: u64,
+    /// Whether other peers can dial this node directly: `public`, `private`
+    /// or `unknown`. Decides whether this node can serve content or only
+    /// consume it.
+    pub reachability: String,
+    /// Peers relaying for this node, when it cannot be dialled directly.
+    pub relays: usize,
 }
 
 impl Node {
@@ -861,6 +867,8 @@ impl Node {
             providing: network.providing,
             cache,
             cache_limit_bytes: self.inner.storage.config().cache_limit_bytes,
+            reachability: network.reachability.as_str().to_string(),
+            relays: network.relays.len(),
         })
     }
 

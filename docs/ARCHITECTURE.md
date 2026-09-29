@@ -119,6 +119,41 @@ Peers learned from Kademlia routing updates are recorded with their
 addresses. That is what lets a node reconnect directly to a peer it has never
 spoken to, after the node they both joined through has disappeared.
 
+## Getting through a router
+
+Almost every home connection is behind a router that accepts nothing inbound.
+A node there can dial out but cannot be dialled, which would make it a
+consumer only — and would leave the network depending on whoever happens to
+have a public address. Four behaviours address that:
+
+```
+start
+ ├─ upnp        ask the router to forward the port
+ ├─ autonat     have other peers try to dial us, so we know rather than guess
+ │    └─ reachable?  ── yes ─→ serve content, and relay for others
+ │                    └─ no ─→ reserve a slot on a peer that is
+ │                              └─ others dial us through it
+ │                                  └─ dcutr: both sides dial at once,
+ │                                     the relay drops out
+ └─ --external-addr skips straight to "yes"
+```
+
+Two properties matter:
+
+* **Every reachable node relays.** Not a volunteer subset, not a configured
+  list: if you can be dialled, you relay, with modest limits so it cannot be
+  used as a proxy. A network where only a few relay is a network with a
+  dependency.
+* **Relays are found, not published.** Identify tells us which peers speak
+  the relay protocol, and libp2p's relay server only advertises it once the
+  node knows it is reachable itself — so a node never offers a service it
+  cannot provide.
+
+A relayed address is deliberately *not* treated as being reachable. The
+router still refuses everything; it is somewhere others can find us, not us
+becoming dialable. Conflating the two would stop the node looking for further
+relays and would have it advertise relay service it cannot provide.
+
 ## Storage
 
 Two layers, deliberately:

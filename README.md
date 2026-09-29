@@ -362,7 +362,7 @@ cannot name the types that hold your viewing data. This is
 ## Development
 
 ```bash
-cargo test --workspace      # 312 tests, including the acceptance suite
+cargo test --workspace      # 317 tests, including the acceptance suite
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
@@ -415,7 +415,9 @@ These are deliberate, and listed in the design document rather than hidden:
   resolution.
 * **Moderation is local only.** Signed, shareable moderation lists are a V1.5
   candidate.
-* **NAT traversal is basic.** No relay or hole punching yet.
+* **Hole punching does not always work.** Some routers refuse it, in which
+  case the connection stays on a relay — slower, and dependent on the relay
+  staying up.
 * **The command line is English only.** The web interface is translated; the
   CLI's own output and help text are not, yet.
 

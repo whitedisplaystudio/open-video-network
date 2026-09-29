@@ -23,6 +23,9 @@ pub(crate) enum Command {
         peer: PeerId,
         addr: Multiaddr,
     },
+    AddExternalAddress {
+        addr: Multiaddr,
+    },
     Publish {
         topic: &'static str,
         data: Vec<u8>,
@@ -52,6 +55,32 @@ pub(crate) enum Command {
     Shutdown,
 }
 
+/// Whether other peers can dial us directly.
+///
+/// The thing that decides whether this node can serve content or only
+/// consume it, and the reason the relay and hole-punching machinery exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Reachability {
+    /// Nobody has told us yet.
+    #[default]
+    Unknown,
+    /// Other peers can dial us. We can serve content, and relay for others.
+    Public,
+    /// A router stands in the way. We reach out fine, but need a relay
+    /// before anyone can reach in.
+    Private,
+}
+
+impl Reachability {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Public => "public",
+            Self::Private => "private",
+        }
+    }
+}
+
 /// A snapshot of what the swarm is doing, for `ourvideo status`.
 #[derive(Clone, Debug)]
 pub struct NetworkStatus {
@@ -61,6 +90,9 @@ pub struct NetworkStatus {
     pub connected_peers: Vec<PeerId>,
     pub routing_table_peers: usize,
     pub providing: usize,
+    pub reachability: Reachability,
+    /// Peers relaying for us, so that others have an address to dial.
+    pub relays: Vec<PeerId>,
 }
 
 /// How we came to hear about a peer.
@@ -97,6 +129,21 @@ pub enum NetworkEvent {
         peer: PeerId,
         cid: ContentId,
         responder: BlockResponder,
+    },
+    /// We learned whether other peers can dial us.
+    ReachabilityChanged {
+        reachability: Reachability,
+    },
+    /// A peer agreed to relay for us, so we now have an address others can
+    /// dial even though our router will not accept connections.
+    RelayReserved {
+        relay: PeerId,
+        address: Multiaddr,
+    },
+    /// A relayed connection was upgraded to a direct one, through both
+    /// routers at once.
+    HolePunched {
+        peer: PeerId,
     },
 }
 
@@ -162,13 +209,32 @@ impl Network {
     }
 
     /// Dial a multiaddr and wait for the connection to be established.
+    ///
+    /// Gives up rather than waiting indefinitely: a relayed address can fail
+    /// in ways the swarm never reports against the peer we asked for.
     pub async fn dial(&self, addr: Multiaddr) -> Result<PeerId> {
-        self.request(|reply| Command::Dial { addr, reply }).await?
+        let (tx, rx) = oneshot::channel();
+        self.send(Command::Dial { addr, reply: tx }).await?;
+        match rx.await {
+            Ok(result) => result,
+            // The event loop dropped the sender, which is how it reports a
+            // dial that never resolved.
+            Err(_) if !self.commands.is_closed() => {
+                Err(NetworkError::Dial("timed out".to_string()))
+            }
+            Err(_) => Err(NetworkError::Stopped),
+        }
     }
 
     /// Teach the routing table where a peer lives.
     pub async fn add_peer_address(&self, peer: PeerId, addr: Multiaddr) -> Result<()> {
         self.send(Command::AddPeerAddress { peer, addr }).await
+    }
+
+    /// Declare an address we are reachable on, for an operator who forwarded
+    /// a port themselves rather than waiting to be told by other peers.
+    pub async fn add_external_address(&self, addr: Multiaddr) -> Result<()> {
+        self.send(Command::AddExternalAddress { addr }).await
     }
 
     pub async fn publish_announcement(&self, data: Vec<u8>) -> Result<()> {

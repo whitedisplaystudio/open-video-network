@@ -31,10 +31,34 @@ function stat(key, value, sub) {
   ]);
 }
 
+/**
+ * How to describe whether others can reach this node.
+ *
+ * The thing a person most needs to know: it decides whether they can share
+ * anything, or only watch.
+ */
+function reachability(status) {
+  if (status.reachability === 'public') {
+    return [t('admin.reach.direct'), t('admin.reach.direct.sub')];
+  }
+  if (status.relays > 0) {
+    return [
+      t('admin.reach.relayed'),
+      t('admin.reach.relayed.sub', { count: status.relays }),
+    ];
+  }
+  if (status.reachability === 'private') {
+    return [t('admin.reach.blocked'), t('admin.reach.blocked.sub')];
+  }
+  return [t('admin.reach.unknown'), t('admin.reach.unknown.sub')];
+}
+
 async function loadOverview() {
   const status = await get('/v1/status');
+  const [reach, reachDetail] = reachability(status);
 
   mount($('stats'), [
+    stat(t('admin.stat.reach'), reach, reachDetail),
     stat(t('admin.stat.peers'), number(status.connectedPeers),
       t('admin.stat.peers.sub', { count: status.knownPeers })),
     stat(t('admin.stat.videos'), number(status.knownVideos),
