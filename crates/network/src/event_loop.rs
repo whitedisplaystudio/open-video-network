@@ -6,7 +6,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use libp2p::core::transport::ListenerId;
 use libp2p::multiaddr::Protocol;
-use libp2p::swarm::SwarmEvent;
+use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
+use libp2p::swarm::{DialError, SwarmEvent};
 use libp2p::{dcutr, gossipsub, identify, kad, mdns, relay, request_response, upnp};
 use libp2p::{Multiaddr, PeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
@@ -305,19 +306,46 @@ impl EventLoop {
         // A relayed address names two: the relay, then the peer we actually
         // want. The last one is the destination.
         let peer = dial_target(&addr);
-        match self.swarm.dial(addr.clone()) {
-            Ok(()) => match peer {
-                Some(peer) => self
-                    .pending_dials
-                    .entry(peer)
-                    .or_default()
-                    .push((reply, tokio::time::Instant::now() + DIAL_TIMEOUT)),
-                None => {
-                    let _ = reply.send(Err(NetworkError::Dial(
-                        "the address does not name a peer id".to_string(),
-                    )));
-                }
-            },
+
+        if let Some(peer) = peer {
+            // Someone we are already talking to needs no second connection.
+            // Pasting a share link for a peer we met a minute ago is the
+            // ordinary case, and every address in that link would otherwise
+            // open its own connection. Four of those reach
+            // `max_connections_per_peer`, after which the swarm refuses the
+            // dial and we report a peer sitting right there as unreachable.
+            if self.swarm.is_connected(&peer) {
+                let _ = reply.send(Ok(peer));
+                return;
+            }
+        }
+
+        // Dialling by peer id rather than by address alone lets the swarm
+        // collapse concurrent attempts at the same peer into one.
+        let opts = match peer {
+            Some(peer) => DialOpts::peer_id(peer)
+                .addresses(vec![addr.clone()])
+                .condition(PeerCondition::DisconnectedAndNotDialing)
+                .build(),
+            None => DialOpts::from(addr.clone()),
+        };
+
+        let outcome = self.swarm.dial(opts);
+        let Some(peer) = peer else {
+            let _ = reply.send(Err(NetworkError::Dial(
+                "the address does not name a peer id".to_string(),
+            )));
+            return;
+        };
+        match outcome {
+            // A dial is already on its way to this peer. Its result is the
+            // one the caller is waiting for, so wait for it rather than
+            // starting a second attempt.
+            Ok(()) | Err(DialError::DialPeerConditionFalse(_)) => self
+                .pending_dials
+                .entry(peer)
+                .or_default()
+                .push((reply, tokio::time::Instant::now() + DIAL_TIMEOUT)),
             Err(e) => {
                 let _ = reply.send(Err(NetworkError::Dial(e.to_string())));
             }

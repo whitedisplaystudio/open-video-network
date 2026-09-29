@@ -235,6 +235,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dialling_a_peer_we_already_have_is_free_and_still_succeeds() {
+        // A share link carries every address its node knows about, and
+        // `add_peer` walks them. Each one used to open its own connection,
+        // so the fifth address hit `max_connections_per_peer` and the swarm
+        // refused it — reporting a peer we were already talking to as
+        // unreachable.
+        let (a, _a_events, a_task, a_addr) = start().await;
+        let (b, _b_events, b_task, _) = start().await;
+
+        let limit = NetworkConfig::default().max_connections_per_peer;
+        for attempt in 0..limit + 3 {
+            let peer = b
+                .dial(a_addr.clone())
+                .await
+                .unwrap_or_else(|e| panic!("dial {attempt} of an already-known peer: {e}"));
+            assert_eq!(peer, a.local_peer_id());
+        }
+
+        // And all of that is still one peer, held open once.
+        assert_eq!(
+            b.status().await.unwrap().connected_peers,
+            vec![a.local_peer_id()]
+        );
+
+        a.shutdown().await.unwrap();
+        b.shutdown().await.unwrap();
+        a_task.await.unwrap();
+        b_task.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn dialling_an_address_without_a_peer_id_is_an_error_not_a_hang() {
         let (network, _events, task, _) = start().await;
         let addr: Multiaddr = "/ip4/127.0.0.1/udp/1/quic-v1".parse().unwrap();
