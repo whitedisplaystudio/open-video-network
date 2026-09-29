@@ -33,12 +33,50 @@
 
 ## クイックスタート
 
-### 必要なもの
+### インストール
+
+[リリースページ](../../releases)から自分の環境に合うものをダウンロードし、展開して
+`ourvideo` を実行するだけです。Web 画面も言語パックもバイナリに同梱されているので、
+**ファイル1つで完結します**。
+
+| ファイル | 対象 |
+| --- | --- |
+| `ourvideo-macos-arm64.tar.gz` | Apple シリコンの Mac |
+| `ourvideo-macos-x86_64.tar.gz` | Intel Mac |
+| `ourvideo-linux-x86_64.tar.gz` | 一般的な Linux |
+| `ourvideo-windows-x86_64.zip` | Windows |
+
+**バイナリはコード署名していないため、「開発元が不明」という警告が出ます。**
+署名するには Apple と証明書発行元に毎年料金を払う必要がありますが、「特定の誰かに
+依存しない」ことを目的としたソフトのためにそれをするのは筋が通らないと判断しました。
+代わりに、全ファイルのチェックサムと、ビルド元のコミットとの対応を検証できる
+[ビルド証明](https://docs.github.com/actions/security-guides/using-artifact-attestations)
+を公開しています。
+
+実行前に、ダウンロードしたものを照合してください。
+
+```bash
+shasum -a 256 -c SHA256SUMS --ignore-missing     # macOS / Linux
+```
+
+```powershell
+Get-FileHash .\ourvideo-windows-x86_64.zip -Algorithm SHA256    # Windows
+```
+
+警告の回避方法:
+
+* **macOS** — バイナリを右クリックして「開く」を一度選びます。または
+  `xattr -d com.apple.quarantine ourvideo` で隔離属性を外します
+* **Windows** — 「詳細情報」→「実行」
+* **Linux** — `chmod +x ourvideo`。警告は出ません
+
+### 自分でビルドする
+
+リリースは[公開されたワークフロー](.github/workflows/release.yml)が
+タグの指すコミットからビルドしています。同じことを手元でもできます。
 
 * Rust 1.85 以降
-* それだけです。FFmpeg は任意で、動画の長さを読むためだけに使います。
-
-### ビルドと起動
+* それだけです。FFmpeg は任意で、あればサムネイルと再生時間が付きます。
 
 ```bash
 cargo build --release
@@ -246,6 +284,11 @@ cargo test --workspace      # 317 テスト（受け入れテスト A〜H を含
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
+
+[CI](.github/workflows/ci.yml) は push のたびに Linux で3つすべてを実行し、
+macOS と Windows は週次・手動・リリース前に実行します。この分け方は理念ではなく
+費用の問題です — 非公開リポジトリでは実行時間が課金対象で、macOS は Linux の
+10倍換算になります。
 
 `crates/node/tests/acceptance.rs` の受け入れテストは、実際の Node
 （実 Identity・実 SQLite・実 libp2p Swarm、ループバックの空きポート）を

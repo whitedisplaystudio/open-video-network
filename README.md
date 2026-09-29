@@ -39,12 +39,54 @@ from:
 
 ## Quickstart
 
-### Requirements
+### Install
+
+Download the build for your machine from the
+[releases page](../../releases), unpack it, and run `ourvideo`. It is a
+single self-contained file — the web interface and every language pack are
+inside the binary.
+
+| File | For |
+| --- | --- |
+| `ourvideo-macos-arm64.tar.gz` | Macs with Apple silicon |
+| `ourvideo-macos-x86_64.tar.gz` | Intel Macs |
+| `ourvideo-linux-x86_64.tar.gz` | Most Linux machines |
+| `ourvideo-windows-x86_64.zip` | Windows |
+
+**The binaries are not code signed, so your system will say the publisher is
+unknown.** Signing would mean paying Apple and a certificate authority every
+year for permission to distribute software whose entire point is not
+depending on anyone in particular, so this project does not. What it does
+instead is publish a checksum for every file, and a
+[build attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations)
+linking it to the commit it was built from.
+
+Check what you downloaded before running it:
+
+```bash
+shasum -a 256 -c SHA256SUMS --ignore-missing     # macOS, Linux
+```
+
+```powershell
+Get-FileHash .\ourvideo-windows-x86_64.zip -Algorithm SHA256    # Windows
+```
+
+Then, to get past the warning:
+
+* **macOS** — right-click the binary and choose *Open*, once. Or remove the
+  quarantine flag: `xattr -d com.apple.quarantine ourvideo`.
+* **Windows** — *More info* → *Run anyway*.
+* **Linux** — `chmod +x ourvideo`. No warning.
+
+### Build it yourself instead
+
+Every release is built by a
+[public workflow](.github/workflows/release.yml) from the commit its tag
+points at, and you can do the same:
 
 * Rust 1.85 or newer (`rustup` recommended)
-* Nothing else. FFmpeg is optional and only used to read a video's duration.
-
-### Build and start
+* Nothing else. FFmpeg is optional: with it, published videos get thumbnails
+  and a duration.
 
 ```bash
 cargo build --release
@@ -366,6 +408,11 @@ cargo test --workspace      # 317 tests, including the acceptance suite
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
+
+[CI](.github/workflows/ci.yml) runs all three on Linux for every push, and
+on macOS and Windows weekly, on demand, and before a release. The split is
+about money rather than principle: while this repository is private, runner
+minutes are metered and macOS counts ten times a Linux minute.
 
 The acceptance tests in `crates/node/tests/acceptance.rs` start real nodes —
 real identities, real SQLite files, real libp2p swarms on ephemeral loopback

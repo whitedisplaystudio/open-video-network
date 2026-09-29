@@ -1,0 +1,137 @@
+name: Release
+
+# Tag a commit `v0.1.0` and this builds a binary for each platform and
+# attaches it to a GitHub release.
+#
+# The binaries are not code signed. Signing would mean an Apple Developer
+# subscription and a Windows certificate, renewed yearly, to distribute
+# software whose whole point is not depending on anyone in particular. The
+# honest alternative is published checksums and build provenance, so that
+# anyone can check a download came from this source — see INSTALL notes in
+# the README for the warnings each platform shows.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # An older Ubuntu than the runner default, so the binary works on
+          # distributions that have not caught up with the newest glibc.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            name: ourvideo-linux-x86_64
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: ourvideo-macos-arm64
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: ourvideo-macos-x86_64
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: ourvideo-windows-x86_64
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add the target
+        run: rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin ourvideo
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/ourvideo dist/
+          cp README.md README.ja.md LICENSE LICENSE-MIT LICENSE-APACHE dist/
+          tar -czf ${{ matrix.name }}.tar.gz -C dist .
+          shasum -a 256 ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/ourvideo.exe dist/
+          Copy-Item README.md, README.ja.md, LICENSE, LICENSE-MIT, LICENSE-APACHE dist/
+          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.name }}.zip
+          (Get-FileHash ${{ matrix.name }}.zip -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.name }}.zip" `
+            | Out-File -Encoding ascii ${{ matrix.name }}.zip.sha256
+
+      # A free, verifiable link between this file and the commit and workflow
+      # that produced it. Not a substitute for a signature everywhere, but it
+      # is something anyone can check, and it costs nothing.
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v2
+        continue-on-error: true
+        with:
+          subject-path: ${{ matrix.name }}.${{ matrix.archive }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ matrix.name }}.${{ matrix.archive }}
+            ${{ matrix.name }}.${{ matrix.archive }}.sha256
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Collect checksums
+        run: |
+          cd artifacts
+          cat *.sha256 > SHA256SUMS
+          rm -f *.sha256
+          ls -la
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            ## Verifying your download
+
+            These binaries are not code signed, so macOS and Windows will
+            warn that the publisher is unknown. The README explains how to
+            get past that on each platform.
+
+            Check the file you downloaded against `SHA256SUMS`:
+
+            ```
+            shasum -a 256 -c SHA256SUMS --ignore-missing
+            ```
