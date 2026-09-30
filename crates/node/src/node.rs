@@ -1,8 +1,9 @@
 //! The node itself: everything wired together.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use libp2p::Multiaddr;
@@ -31,6 +32,28 @@ use crate::{NodeError, Result};
 /// without turning one downloading node into a burst of load on a provider.
 const CONCURRENT_CHUNK_FETCHES: usize = 4;
 
+/// How many chunks to have in flight ahead of the one being written to the
+/// player.
+///
+/// Chunks used to be fetched strictly one at a time: the request for the next
+/// one only started once the previous chunk had been handed over, so a remote
+/// video paid a full round trip per chunk with nothing overlapping. The cost
+/// of a window is memory — at most this many chunks per active stream — and
+/// the local API is loopback-only, so the number of active streams is however
+/// many tabs one person has open.
+const STREAM_READ_AHEAD: usize = 4;
+
+/// How long a provider lookup is reused before asking the network again.
+///
+/// A player seeking through a video issues a Range request per seek, and each
+/// one used to start a fresh DHT query. Which peers hold a video does not
+/// change on that timescale.
+const PROVIDER_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// Videos to remember providers for. Small: this exists to make a burst of
+/// Range requests for one video cheap, not to be a second routing table.
+const PROVIDER_CACHE_ENTRIES: usize = 64;
+
 /// How many previously known peers to dial on start.
 const STARTUP_DIAL_LIMIT: usize = 16;
 
@@ -47,6 +70,8 @@ pub(crate) struct Inner {
     pub listen_addrs: Mutex<Vec<Multiaddr>>,
     /// Live progress for anything watching the local event stream.
     pub events: EventBus,
+    /// Which peers were found to hold a video, and when we asked.
+    providers: Mutex<HashMap<ContentId, (Vec<PeerId>, Instant)>>,
 }
 
 /// A handle to a running node. Cheap to clone.
@@ -72,6 +97,74 @@ pub struct PublishReport {
     /// False when there was nobody to gossip to yet. The video is still
     /// published locally and discoverable through the DHT.
     pub announced_to_network: bool,
+}
+
+/// Where a streaming response has got to, and what is already on its way.
+struct StreamState {
+    node: Node,
+    plan: Arc<StreamPlan>,
+    range: ByteRange,
+    chunk_size: u64,
+    /// The next chunk to ask for.
+    next_to_fetch: usize,
+    /// The next chunk to hand to the player. Chunks must arrive in order, so
+    /// this trails `next_to_fetch` by at most the window size.
+    next_to_emit: usize,
+    last: usize,
+    ahead: ReadAhead,
+}
+
+impl StreamState {
+    /// Keep the window full, so the network is working on chunks the player
+    /// has not asked for yet.
+    fn fill_window(&mut self) {
+        while self.ahead.tasks.len() < STREAM_READ_AHEAD && self.next_to_fetch <= self.last {
+            let Some(cid) = self.plan.manifest.chunks.get(self.next_to_fetch).copied() else {
+                // A manifest that does not cover the range it claims to. Stop
+                // where the chunks stop rather than invent bytes.
+                self.last = self.next_to_fetch.saturating_sub(1);
+                return;
+            };
+            let node = self.node.clone();
+            let plan = Arc::clone(&self.plan);
+            self.ahead.tasks.push_back(tokio::spawn(async move {
+                node.block_for_stream(cid, &plan.providers)
+                    .await
+                    .map_err(|e| std::io::Error::other(e.to_string()))
+            }));
+            self.next_to_fetch += 1;
+        }
+    }
+
+    /// Abandon the rest of the response after an error.
+    ///
+    /// The providers we were given could not serve this, so the next request
+    /// for the same video should ask the network again rather than reuse the
+    /// list that just failed.
+    fn give_up(mut self) -> Self {
+        self.node.forget_providers(&self.plan.cid);
+        self.ahead.tasks.clear();
+        self.next_to_emit = self.last.saturating_add(1);
+        self
+    }
+}
+
+/// Chunk fetches running ahead of the player.
+#[derive(Default)]
+struct ReadAhead {
+    tasks: VecDeque<tokio::task::JoinHandle<std::result::Result<Vec<u8>, std::io::Error>>>,
+}
+
+impl Drop for ReadAhead {
+    fn drop(&mut self) {
+        // A seek, a closed tab or a stalled player drops the stream. Nobody
+        // wants these chunks now, and a fetch left running would hold a
+        // connection open and spend a peer's upload on bytes that will be
+        // thrown away.
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+    }
 }
 
 /// What a fetch did.
@@ -523,10 +616,11 @@ impl Node {
     }
 
     async fn providers_for(&self, cid: ContentId) -> Result<Vec<PeerId>> {
-        let mut providers: Vec<PeerId> = self.inner.network.get_providers(cid).await?;
+        let mut providers = self.announced_providers(cid).await?;
         // Peers we are already connected to are worth asking even if the DHT
         // has not indexed them yet — which is the normal case on a small or
-        // brand new network.
+        // brand new network. This part is local and always current, so it is
+        // not what the cache below is for.
         let status = self.inner.network.status().await?;
         for peer in status.connected_peers {
             if !providers.contains(&peer) {
@@ -534,6 +628,42 @@ impl Node {
             }
         }
         Ok(providers)
+    }
+
+    /// Peers the DHT says hold `cid`, reusing a recent answer.
+    async fn announced_providers(&self, cid: ContentId) -> Result<Vec<PeerId>> {
+        if let Some(cached) = self.remembered_providers(&cid) {
+            return Ok(cached);
+        }
+        let found = self.inner.network.get_providers(cid).await?;
+        self.remember_providers(cid, &found);
+        Ok(found)
+    }
+
+    fn remembered_providers(&self, cid: &ContentId) -> Option<Vec<PeerId>> {
+        let cache = self.inner.providers.lock().ok()?;
+        let (peers, asked_at) = cache.get(cid)?;
+        (asked_at.elapsed() < PROVIDER_CACHE_TTL).then(|| peers.clone())
+    }
+
+    fn remember_providers(&self, cid: ContentId, peers: &[PeerId]) {
+        let Ok(mut cache) = self.inner.providers.lock() else {
+            return;
+        };
+        cache.retain(|_, (_, asked_at)| asked_at.elapsed() < PROVIDER_CACHE_TTL);
+        if cache.len() >= PROVIDER_CACHE_ENTRIES {
+            // Everything in here is still fresh, so there is no least-useful
+            // entry to pick. Drop the lot rather than grow without bound.
+            cache.clear();
+        }
+        cache.insert(cid, (peers.to_vec(), Instant::now()));
+    }
+
+    /// Forget what we were told about `cid` after nobody there could serve it.
+    fn forget_providers(&self, cid: &ContentId) {
+        if let Ok(mut cache) = self.inner.providers.lock() {
+            cache.remove(cid);
+        }
     }
 
     async fn fetch_manifest(&self, cid: ContentId, providers: &[PeerId]) -> Result<VideoManifest> {
@@ -722,8 +852,9 @@ impl Node {
 
     /// Bytes for one byte range, as a stream.
     ///
-    /// Chunks are produced in order and fetched on demand, so playback can
-    /// start on the first chunk rather than the last. A chunk that cannot be
+    /// Chunks are produced in order but fetched several at a time, so playback
+    /// starts on the first chunk and the round trip for the next one is
+    /// already paid for by the time it is needed. A chunk that cannot be
     /// fetched ends the stream with an error, which the player sees as a
     /// truncated response.
     pub fn stream_range(
@@ -731,33 +862,45 @@ impl Node {
         plan: StreamPlan,
         range: ByteRange,
     ) -> impl futures::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Send {
-        let node = self.clone();
         let chunk_size = plan.manifest.chunk_size as u64;
         let indices = range.chunk_indices(chunk_size);
-        let state = (node, plan, range, *indices.start(), *indices.end());
+        let (first, last) = (*indices.start(), *indices.end());
 
-        futures::stream::unfold(state, move |(node, plan, range, index, last)| async move {
-            if index > last {
+        let state = StreamState {
+            node: self.clone(),
+            // Shared rather than cloned: every read-ahead task needs the
+            // provider list, and there is one task per chunk.
+            plan: Arc::new(plan),
+            range,
+            chunk_size,
+            next_to_fetch: first,
+            next_to_emit: first,
+            last,
+            ahead: ReadAhead::default(),
+        };
+
+        futures::stream::unfold(state, move |mut state| async move {
+            if state.next_to_emit > state.last {
                 return None;
             }
-            let chunk_cid = plan.manifest.chunks.get(index).copied()?;
-            let data = match node.block_for_stream(chunk_cid, &plan.providers).await {
-                Ok(data) => data,
+            state.fill_window();
+            let fetching = state.ahead.tasks.pop_front()?;
+            let data = match fetching.await {
+                Ok(Ok(data)) => data,
+                Ok(Err(e)) => return Some((Err(e), state.give_up())),
+                // Cancelled or panicked. Either way there are no bytes.
                 Err(e) => {
-                    return Some((
-                        Err(std::io::Error::other(e.to_string())),
-                        (node, plan, range, last + 1, last),
-                    ))
+                    return Some((Err(std::io::Error::other(e.to_string())), state.give_up()))
                 }
             };
 
             // Trim the first and last chunks to the requested range.
-            let chunk_start = index as u64 * chunk_size;
-            let from = range.start.saturating_sub(chunk_start) as usize;
-            let to = ((range.end - chunk_start + 1) as usize).min(data.len());
+            let chunk_start = state.next_to_emit as u64 * state.chunk_size;
+            let from = state.range.start.saturating_sub(chunk_start) as usize;
+            let to = ((state.range.end - chunk_start + 1) as usize).min(data.len());
             let slice = data.get(from..to).unwrap_or_default().to_vec();
-
-            Some((Ok(slice), (node, plan, range, index + 1, last)))
+            state.next_to_emit += 1;
+            Some((Ok(slice), state))
         })
     }
 
@@ -1024,6 +1167,7 @@ pub(crate) fn build_inner(
         started_at: ovn_protocol::now_secs(),
         api_token,
         listen_addrs: Mutex::new(Vec::new()),
+        providers: Mutex::new(HashMap::new()),
         config,
     }))
 }

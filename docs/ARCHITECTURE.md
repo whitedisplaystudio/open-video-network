@@ -218,15 +218,32 @@ browser willing to scrub through a video rather than download it first.
 Range: bytes=1048570-2097160
  └─ resolve the manifest (fetching it if we lack it)
      └─ work out which chunks the range touches
-         └─ for each, in order:
+         └─ keep four of them in flight at once:
              ├─ held locally?  read it
              └─ otherwise      fetch it from a provider, verify, store
-                 └─ trim the first and last chunk to the requested bytes
+         └─ hand them to the player in order, trimming
+            the first and last to the requested bytes
 ```
 
-The body is a stream, so the first chunk goes out while the second is still
-being fetched. Providers are resolved once, before the response starts,
-rather than per chunk.
+Chunks are produced in order but fetched several at a time. Fetching them one
+at a time meant the request for chunk N+1 only started once chunk N had been
+handed over, so a remote video paid a full round trip per megabyte with
+nothing overlapping — 16 MiB over loopback, where a round trip costs almost
+nothing, still took 557 ms that way against 386 ms with a window of four. On a
+real link the gap is the round-trip time multiplied by the number of chunks.
+
+The window costs memory: at most four chunks per active stream. The local API
+is loopback-only, so the number of active streams is however many tabs one
+person has open. Dropping the response — a seek, a closed tab — aborts
+whatever was still being fetched for it, so a scrub through a video does not
+leave a trail of transfers nobody wants.
+
+Providers are resolved once, before the response starts, and the answer is
+reused for 30 seconds. A player seeking issues a Range request per seek, and
+each one used to start its own DHT query; which peers hold a video does not
+change that fast. A range that fails against every provider drops the cached
+answer, so the next attempt asks the network again rather than retrying a list
+that just failed.
 
 The `Content-Type` comes from a manifest a stranger wrote, so it is matched
 against an allowlist of media types; anything unrecognised is served as

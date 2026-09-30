@@ -263,7 +263,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4801/v1/status | jq
 | `GET /v1/videos/{cid}` | One video. |
 | `POST /v1/videos/{cid}/fetch` | Fetch its blocks from the network. |
 | `POST /v1/videos/{cid}/export` | Write a playable file. |
-| `GET`/`HEAD` `/v1/videos/{cid}/stream` | Play it. Honours `Range`; chunks are fetched as the player needs them. |
+| `GET`/`HEAD` `/v1/videos/{cid}/stream` | Play it. Honours `Range`; chunks are fetched a few ahead of the player. |
 | `GET /v1/videos/{cid}/thumbnail` | Its thumbnail, fetched from a peer if needed. |
 | `POST /v1/upload?fileName=…&title=…&tags=…` | Publish a file sent as the request body. |
 | `GET /v1/events` | Server-sent events: peers, discoveries, download progress. |
@@ -316,9 +316,9 @@ history is exactly the data this project promises to keep to itself.
 
 **The viewer** (`/ui`) is for watching: a feed ranked on this device, browse
 and local search, and a player that **streams** — chunks are fetched from
-peers as the player asks for them, so playback starts on the first chunk
-rather than the last. Seeking works, because the node answers `Range`
-requests. Every recommendation can be expanded into the exact terms that
+peers a few ahead of the player, so playback starts on the first chunk rather
+than the last and does not stall waiting for the next one. Seeking works,
+because the node answers `Range` requests. Every recommendation can be expanded into the exact terms that
 produced its score.
 
 Both are available in English, 日本語, Español, Português and العربية. The
