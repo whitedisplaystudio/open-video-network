@@ -114,7 +114,17 @@ code, .mono { font-family: var(--mono); font-size: .86em; }
   font-weight: 700;
 }
 
-.nav { display: flex; gap: 2px; }
+.nav {
+  display: flex;
+  gap: 2px;
+  /* If the tabs do not fit, scroll them. Squeezing them is what produced
+     one-character-per-line labels. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav::-webkit-scrollbar { display: none; }
 
 .nav button {
   border: 0;
@@ -125,6 +135,12 @@ code, .mono { font-family: var(--mono); font-size: .86em; }
   padding: 6px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  /* A flex item may shrink to its min-content width. In Japanese, Chinese or
+     Korean a line may break between any two characters, so min-content is one
+     character wide and the label renders vertically. Latin text hides the
+     bug because its min-content is the longest word. */
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 .nav button:hover { background: var(--surface-2); color: var(--text); }
 .nav button[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 560; }
@@ -266,6 +282,7 @@ h2 { font-size: 16px; font-weight: 600; margin: 0 0 10px; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
   font-size: 11.5px;
   font-weight: 560;
   padding: 2px 8px;
@@ -578,7 +595,11 @@ main:focus { outline: none; }
 
 @media (max-width: 640px) {
   .topbar { flex-wrap: wrap; padding: 10px 14px; }
+  /* A row of its own, so five tabs are not fighting the brand and the badges
+     for the same line. */
+  .nav { order: 2; width: 100%; }
   .searchbar { order: 3; width: 100%; }
+  .spacer { display: none; }
   main { padding: 18px 14px 70px; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }

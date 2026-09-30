@@ -899,3 +899,34 @@ fn the_accessibility_strings_are_translated_everywhere() {
         }
     }
 }
+
+#[test]
+fn tab_labels_cannot_be_squeezed_into_vertical_text() {
+    // A flex item may shrink to its min-content width. In Japanese, Chinese
+    // and Korean a line may break between any two characters, so min-content
+    // is one character and the label renders one character per line. Latin
+    // text hides this, because its min-content is the longest word.
+    let css = read("app.css");
+    let at = css
+        .find(".nav button {")
+        .expect("the nav buttons are styled");
+    let block_end = css[at..].find('}').expect("a closing brace") + at;
+    let block = &css[at..block_end];
+    assert!(
+        block.contains("white-space: nowrap"),
+        "a tab label must not be allowed to wrap: {block}"
+    );
+    assert!(
+        block.contains("flex: 0 0 auto"),
+        "a tab must not shrink below its text: {block}"
+    );
+
+    // And when they genuinely do not fit, the row scrolls rather than
+    // crushing them.
+    let at = css.find(".nav {").expect("the nav is styled");
+    let block_end = css[at..].find('}').expect("a closing brace") + at;
+    assert!(
+        css[at..block_end].contains("overflow-x: auto"),
+        "the tab row should scroll when it overflows"
+    );
+}
