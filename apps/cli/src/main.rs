@@ -45,6 +45,8 @@ enum Command {
     Start(StartArgs),
     /// Show what this node is doing.
     Status,
+    /// Check this installation and say what to do about anything wrong.
+    Doctor(DoctorArgs),
     /// Stop the running node.
     Stop,
     /// Peers this node knows about.
@@ -95,6 +97,19 @@ struct UiArgs {
     /// Print the links instead of opening a browser.
     #[arg(long)]
     print: bool,
+}
+
+#[derive(Args, Debug)]
+struct DoctorArgs {
+    /// Peer-to-peer port to test. Only used when no node is running.
+    #[arg(long, default_value_t = DEFAULT_P2P_PORT)]
+    port: u16,
+    /// Local API port to test. Only used when no node is running.
+    #[arg(long, default_value_t = DEFAULT_API_PORT)]
+    api_port: u16,
+    /// How many stored blocks to rehash. 0 skips the cache.
+    #[arg(long, default_value_t = 128)]
+    verify_blocks: usize,
 }
 
 #[derive(Args, Debug)]
@@ -272,7 +287,31 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Start(args) => start(args, data_dir).await,
+        // `doctor` is the one command that has to work when nothing else
+        // does, so it never goes through the API client.
+        Command::Doctor(args) => doctor(args, data_dir, cli.json).await,
         other => run_client_command(other, data_dir, cli.json).await,
+    }
+}
+
+/// Diagnose the installation, and exit non-zero if something is broken so
+/// that a script can tell.
+async fn doctor(args: DoctorArgs, data_dir: PathBuf, as_json: bool) -> Result<()> {
+    let mut options = ovn_node::doctor::DoctorOptions::new(&data_dir, args.port, args.api_port);
+    options.blocks_to_verify = args.verify_blocks;
+    let report = ovn_node::doctor::run(options).await;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", render::doctor(&report));
+    }
+    if report.is_healthy() {
+        Ok(())
+    } else {
+        // The report has already said what is wrong and what to do; anyhow
+        // would only print it again.
+        std::process::exit(1);
     }
 }
 
@@ -377,7 +416,9 @@ async fn run_client_command(command: Command, data_dir: PathBuf, as_json: bool) 
     // renders it, so `--json` works uniformly without each command repeating
     // the check.
     let (value, render): Rendered = match command {
-        Command::Start(_) => unreachable!("handled before connecting"),
+        Command::Start(_) | Command::Doctor(_) => {
+            unreachable!("handled before connecting")
+        }
 
         Command::Status => (client.get("/v1/status").await?, Box::new(render::status)),
 

@@ -619,7 +619,7 @@ impl Node {
                 .downloads_dir()
                 .join(sanitise_file_name(&manifest.file_name))
         });
-        self.inner.storage.store().assemble(&manifest, &out_path)?;
+        self.inner.storage.assemble(&manifest, &out_path)?;
         Ok(out_path)
     }
 

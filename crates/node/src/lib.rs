@@ -15,6 +15,7 @@
 
 mod api;
 mod config;
+pub mod doctor;
 mod dto;
 mod events;
 mod i18n;

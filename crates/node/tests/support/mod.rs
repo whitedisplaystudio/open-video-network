@@ -121,6 +121,36 @@ pub fn write_seeded_file(dir: &std::path::Path, name: &str, size: usize, seed: u
     path
 }
 
+/// Publish `path`, retrying until the announcement actually reached the
+/// gossip mesh.
+///
+/// A publish a moment after two nodes connect has nobody subscribed to the
+/// topic yet. Re-publishing is harmless — the content id is the same — and it
+/// is what a test wants rather than a fixed sleep.
+pub async fn publish_until_announced(
+    node: &ovn_node::Node,
+    path: &std::path::Path,
+    title: &str,
+    tags: &[&str],
+) -> ovn_protocol::ContentId {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let report = node
+            .publish_video(
+                path,
+                Some(title.to_string()),
+                String::new(),
+                tags.iter().map(|t| t.to_string()).collect(),
+            )
+            .await
+            .expect("publishing");
+        if report.announced_to_network || tokio::time::Instant::now() >= deadline {
+            return ovn_protocol::ContentId::parse(&report.video.cid).expect("a valid content id");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 /// Connect `from` to `to` using nothing but a share link, the way a person
 /// would.
 pub async fn join_via_share_link(from: &TestNode, to: &TestNode) {

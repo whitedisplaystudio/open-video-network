@@ -2,6 +2,8 @@
 
 use serde_json::Value;
 
+use ovn_node::doctor::{Report, Severity};
+
 /// Right-pad to `width` columns, counting characters rather than bytes so a
 /// CJK title does not break the layout more than it has to.
 fn pad(text: &str, width: usize) -> String {
@@ -305,6 +307,86 @@ pub fn watch_history(value: &Value) {
     }
     println!();
     println!("Stored only on this device. `ourvideo privacy clear` erases it.");
+}
+
+/// The diagnosis, as a list a person can read top to bottom.
+///
+/// Findings come with what to do about them indented underneath, because a
+/// problem the reader cannot act on is not worth their attention.
+pub fn doctor(report: &Report) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("Checking {}\n\n", report.data_dir.display()));
+
+    let width = report
+        .checks
+        .iter()
+        .map(|c| c.name.chars().count())
+        .max()
+        .unwrap_or(0);
+
+    for check in &report.checks {
+        let mark = match check.severity {
+            Severity::Ok => "ok  ",
+            Severity::Warning => "warn",
+            Severity::Problem => "FAIL",
+        };
+        out.push_str(&format!(
+            "  {mark}  {}  {}\n",
+            pad(&check.name, width),
+            check.detail
+        ));
+        if let Some(remedy) = &check.remedy {
+            // Line the remedy up under the finding it belongs to.
+            let indent = " ".repeat(width + 10);
+            for line in wrap(remedy, 72) {
+                out.push_str(&format!("{indent}{line}\n"));
+            }
+        }
+    }
+
+    out.push('\n');
+    let (problems, warnings) = (report.problems(), report.warnings());
+    match (problems, warnings) {
+        (0, 0) => out.push_str("Nothing to fix.\n"),
+        (0, w) => out.push_str(&format!(
+            "Nothing to fix. {} worth knowing about.\n",
+            plural(w, "warning")
+        )),
+        (p, 0) => out.push_str(&format!("{} to fix.\n", plural(p, "problem"))),
+        (p, w) => out.push_str(&format!(
+            "{} to fix, and {} worth knowing about.\n",
+            plural(p, "problem"),
+            plural(w, "warning")
+        )),
+    }
+    out
+}
+
+fn plural(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
+/// Break `text` into lines of at most `width` characters, on word boundaries.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 #[cfg(test)]

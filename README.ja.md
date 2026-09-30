@@ -139,6 +139,7 @@ ourvideo recommendation explain <CID>   # なぜその順位なのか
 | --- | --- |
 | `ourvideo start` | Node を起動（他のコマンドはこれが必要） |
 | `ourvideo status` | Peer・動画・キャッシュ・待ち受けアドレス |
+| `ourvideo doctor` | 環境を点検し、問題があれば対処方法まで表示 |
 | `ourvideo stop` | Node を停止 |
 | `ourvideo share-link` | 自分に接続してもらうためのリンク |
 | `ourvideo ui [--admin]` | Web 画面をブラウザで開く |
@@ -315,6 +316,35 @@ gh workflow run ci.yml -f platforms=all       # Linux / macOS / Windows
 `ourvideo start` と同じコードパスを通します。
 
 ### うまくいかないとき
+
+まずこれを実行してください。
+
+```bash
+ourvideo doctor
+```
+
+Node が起動していなくても動き、何も書き換えません。問題が見つかったときだけ
+終了コードが 0 以外になるので、スクリプトに入れても安全です。点検する内容は、
+データディレクトリに書き込めるか、鍵と API トークンが同じマシンの他アカウントから
+読めてしまっていないか、データベースが壊れていないか、検索索引が応答するか、
+保存済みブロックが今もその ID のハッシュと一致するか、ディスクの残量、FFmpeg の
+有無、ポートが空いているか、そして Node が動いていればその Peer 数と外から
+到達できるかどうか。見つかった項目には対処方法が併記されます。
+
+```
+  ok    database         node.db is intact
+  ok    block integrity  128 of 4021 blocks rehashed, all correct
+  warn  reachability     behind a router, with no peer relaying yet
+                         This node can watch but others cannot reach it to fetch
+                         what it publishes. It will keep looking for a relay.
+```
+
+`--verify-blocks N` で再ハッシュするブロック数を変えられます（0 ならキャッシュの
+点検を省略。キャッシュが満杯のときはこちらが速い）。Node が起動していないときに
+どのポートを調べるかは `--port` と `--api-port` で指定します。
+
+個別の症状:
+
 
 **macOS で `cc` が「You have not agreed to the Xcode license agreements」で失敗する**
 

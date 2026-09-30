@@ -83,19 +83,44 @@ impl Storage {
     /// Read a block and mark it as recently used, so that watching something
     /// keeps it in the cache.
     pub fn get(&self, cid: &ContentId) -> Result<Vec<u8>> {
-        let data = self.store.get(cid)?;
+        let data = self.forget_if_corrupt(self.store.get(cid))?;
         self.db.touch_cached(cid)?;
         Ok(data)
     }
 
     pub fn try_get(&self, cid: &ContentId) -> Result<Option<Vec<u8>>> {
-        match self.store.try_get(cid)? {
+        match self.forget_if_corrupt(self.store.try_get(cid))? {
             Some(data) => {
                 self.db.touch_cached(cid)?;
                 Ok(Some(data))
             }
             None => Ok(None),
         }
+    }
+
+    /// The block store deletes a block that no longer hashes to its id rather
+    /// than handing back bad bytes. The bookkeeping has to follow: otherwise
+    /// the cache keeps charging for a file that is gone, and the node keeps
+    /// counting itself as a provider of content it can no longer serve.
+    /// The error names the block, so this covers every read that can reach a
+    /// bad file, not only the ones that go through [`Storage::get`].
+    fn forget_if_corrupt<T>(
+        &self,
+        result: std::result::Result<T, ovn_content::ContentError>,
+    ) -> Result<T> {
+        if let Err(ovn_content::ContentError::IntegrityFailure { cid }) = &result {
+            tracing::warn!(%cid, "a stored block no longer matches its id; dropping it");
+            if let Err(e) = self.db.forget_cached_raw(cid) {
+                tracing::warn!(%cid, error = %e, "could not un-record a corrupt block");
+            }
+        }
+        Ok(result?)
+    }
+
+    /// Write a video back out as the file it was, keeping the cache
+    /// accounting right if a block turns out to be damaged on the way.
+    pub fn assemble(&self, manifest: &VideoManifest, out_path: impl AsRef<Path>) -> Result<u64> {
+        self.forget_if_corrupt(self.store.assemble(manifest, out_path))
     }
 
     /// Store bytes received from a peer under the id we requested.

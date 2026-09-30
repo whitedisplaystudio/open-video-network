@@ -107,6 +107,29 @@ impl Database {
         self.conn.lock().map_err(|_| DatabaseError::Poisoned)
     }
 
+    /// What SQLite makes of the file it is holding.
+    ///
+    /// A healthy database answers with the single word `ok`. Anything else is
+    /// a description of the damage, and is what the user needs to see.
+    pub fn integrity_check(&self) -> Result<Vec<String>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("PRAGMA integrity_check")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let lines = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(lines
+            .into_iter()
+            .filter(|line| !line.eq_ignore_ascii_case("ok"))
+            .collect())
+    }
+
+    /// Whether the full-text index answers a query.
+    ///
+    /// FTS5 is compiled into the bundled SQLite, so a failure here means the
+    /// index itself is damaged rather than absent.
+    pub fn full_text_search_works(&self) -> bool {
+        self.search_videos("ourvideo-doctor-probe", 1).is_ok()
+    }
+
     /// Run `VACUUM`, reclaiming space after a large eviction.
     pub fn vacuum(&self) -> Result<()> {
         self.conn()?.execute_batch("VACUUM")?;

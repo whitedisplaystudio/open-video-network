@@ -140,6 +140,19 @@ impl BlockStore {
         Ok(Some(data))
     }
 
+    /// Whether the block on disk still hashes to the id it is filed under.
+    ///
+    /// Unlike [`BlockStore::try_get`], a failure here leaves the file alone:
+    /// a diagnostic should report what it found, not change it.
+    pub fn verify(&self, cid: &ContentId) -> Result<Option<bool>> {
+        let path = self.path_for(cid);
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let data = fs::read(&path).map_err(io_err(&path))?;
+        Ok(Some(cid.verifies(&data)))
+    }
+
     pub fn remove(&self, cid: &ContentId) -> Result<bool> {
         let path = self.path_for(cid);
         if !path.is_file() {

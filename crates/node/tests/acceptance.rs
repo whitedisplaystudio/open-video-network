@@ -13,36 +13,6 @@ use support::*;
 use ovn_database::WatchEvent;
 use ovn_protocol::{to_cbor_vec, ContentId};
 
-/// Publish, retrying until the announcement actually reaches the network.
-///
-/// A freshly connected GossipSub mesh takes a moment to form; publishing into
-/// it before then succeeds locally but tells nobody. Re-publishing the same
-/// file is harmless: the content id is derived from the bytes, so it is the
-/// same video either way.
-async fn publish_until_announced(
-    node: &ovn_node::Node,
-    path: &std::path::Path,
-    title: &str,
-    tags: &[&str],
-) -> ContentId {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        let report = node
-            .publish_video(
-                path,
-                Some(title.to_string()),
-                String::new(),
-                tags.iter().map(|t| t.to_string()).collect(),
-            )
-            .await
-            .expect("publishing");
-        if report.announced_to_network || tokio::time::Instant::now() >= deadline {
-            return ContentId::parse(&report.video.cid).expect("a valid content id");
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-}
-
 // ---------------------------------------------------------------- Test A
 
 #[tokio::test(flavor = "multi_thread")]

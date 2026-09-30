@@ -2791,6 +2791,7 @@ dependencies = [
  "directories",
  "futures",
  "getrandom 0.3.4",
+ "libc",
  "libp2p",
  "ovn-content",
  "ovn-database",
@@ -2809,6 +2810,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

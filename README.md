@@ -151,6 +151,7 @@ ourvideo recommendation explain <CID>
 | --- | --- |
 | `ourvideo start` | Run a node. Everything else needs one running. |
 | `ourvideo status` | Peers, videos, cache, listening addresses. |
+| `ourvideo doctor` | Check the installation and say what to do about anything wrong. |
 | `ourvideo stop` | Stop the running node. |
 | `ourvideo share-link` | A link others can use to reach you. |
 | `ourvideo ui [--admin] [--print]` | Open the web interface in a browser. |
@@ -444,6 +445,36 @@ test-only database: the tests exercise the same code path `ourvideo start`
 does.
 
 ### Troubleshooting
+
+Start here:
+
+```bash
+ourvideo doctor
+```
+
+It works whether or not a node is running, changes nothing, and exits non-zero
+when it found something broken — so it is safe to put in a script. It checks
+the data directory and whether it can be written to, that the identity key and
+API token are not readable by other accounts on the machine, that the database
+is intact and the search index answers, that a sample of stored blocks still
+hash to their ids, free disk space, whether FFmpeg is installed, whether the
+ports are free, and — if a node is answering — its peers and whether anyone can
+reach it. Each finding comes with what to do about it.
+
+```
+  ok    database         node.db is intact
+  ok    block integrity  128 of 4021 blocks rehashed, all correct
+  warn  reachability     behind a router, with no peer relaying yet
+                         This node can watch but others cannot reach it to fetch
+                         what it publishes. It will keep looking for a relay.
+```
+
+`--verify-blocks N` changes how many blocks are rehashed (0 skips the cache
+entirely, which matters on a full one). `--port` and `--api-port` say which
+ports to test when no node is running.
+
+Specific problems:
+
 
 **`cc` fails with "You have not agreed to the Xcode license agreements"**
 (macOS). Either accept it once:
