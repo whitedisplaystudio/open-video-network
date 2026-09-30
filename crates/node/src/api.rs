@@ -115,6 +115,16 @@ fn router(node: Node) -> Router {
         .route("/v1/preferences", get(preferences))
         .route("/v1/profile", post(publish_profile))
         .route("/v1/follow/{public_key}", post(follow).delete(unfollow))
+        // Channels: subscribing to a person rather than to a machine.
+        .route("/v1/channel/link", get(channel_link))
+        .route(
+            "/v1/subscriptions",
+            get(list_subscriptions).post(subscribe_channel),
+        )
+        .route("/v1/subscriptions/refresh", post(refresh_subscriptions))
+        .route("/v1/subscriptions/{public_key}", delete(unsubscribe))
+        .route("/v1/channels/{public_key}/videos", get(channel_videos))
+        .route("/v1/channels/{public_key}/refresh", post(refresh_channel))
         .route("/v1/blocked/cids", get(blocked_cids))
         .route(
             "/v1/blocked/cids/{cid}",
@@ -440,6 +450,77 @@ async fn block_cid(
 async fn unblock_cid(State(node): State<Node>, Path(cid): Path<String>) -> ApiResult<StatusCode> {
     node.unblock_cid(&parse_cid(&cid)?)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn channel_link(State(node): State<Node>) -> ApiResult<Json<serde_json::Value>> {
+    Ok(Json(serde_json::json!({ "link": node.channel_link()? })))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubscribeBody {
+    link: String,
+}
+
+async fn subscribe_channel(
+    State(node): State<Node>,
+    Json(body): Json<SubscribeBody>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let report = node.subscribe_channel(&body.link).await?;
+    Ok(Json(serde_json::json!({
+        "publicKey": report.public_key,
+        "displayName": report.display_name,
+        "newVideos": report.new_videos,
+    })))
+}
+
+async fn unsubscribe(State(node): State<Node>, Path(key): Path<String>) -> ApiResult<StatusCode> {
+    node.unsubscribe(&parse_key(&key)?)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_subscriptions(State(node): State<Node>) -> ApiResult<Json<serde_json::Value>> {
+    let rows: Vec<serde_json::Value> = node
+        .subscriptions()?
+        .into_iter()
+        .map(|s| {
+            // How many of theirs this device actually holds, which is what a
+            // person wants to see beside the name.
+            let videos = ovn_identity::PublicKey::from_hex(&s.public_key)
+                .ok()
+                .and_then(|key| node.channel_videos(&key).ok())
+                .map(|v| v.len())
+                .unwrap_or(0);
+            serde_json::json!({
+                "publicKey": s.public_key,
+                "displayName": s.display_name,
+                "since": s.since,
+                "lastChecked": s.last_checked,
+                "videos": videos,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::Value::Array(rows)))
+}
+
+async fn channel_videos(
+    State(node): State<Node>,
+    Path(key): Path<String>,
+) -> ApiResult<Json<Vec<ovn_database::VideoRecord>>> {
+    Ok(Json(node.channel_videos(&parse_key(&key)?)?))
+}
+
+async fn refresh_channel(
+    State(node): State<Node>,
+    Path(key): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let found = node.refresh_channel(&parse_key(&key)?).await?;
+    Ok(Json(serde_json::json!({ "newVideos": found })))
+}
+
+async fn refresh_subscriptions(State(node): State<Node>) -> Json<serde_json::Value> {
+    let found = node.refresh_subscriptions().await;
+    Json(serde_json::json!({ "newVideos": found }))
 }
 
 async fn blocked_creators(

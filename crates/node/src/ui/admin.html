@@ -75,7 +75,17 @@
       <p class="lede" data-i18n="admin.shutdown.lede"></p>
       <button type="button" id="shutdown" class="danger" data-i18n="admin.shutdown.button"></button>
     </div>
-  </section>
+  
+    <div class="card">
+      <h2 data-i18n="admin.channel.title"></h2>
+      <p class="hint" data-i18n="admin.channel.lede"></p>
+      <div class="row">
+        <input id="channel-link" type="text" readonly>
+        <button type="button" id="copy-channel-link" class="small"
+                data-i18n="admin.channel.copy"></button>
+      </div>
+    </div>
+</section>
 
   <!-- Peers -->
   <section class="page" data-page="peers" hidden>

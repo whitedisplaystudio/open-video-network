@@ -8,7 +8,8 @@
 use ovn_database::{PeerSource, VideoUpsert};
 use ovn_network::{BlockResponse, DiscoverySource, NetworkEvent};
 use ovn_protocol::{
-    from_cbor_slice, ContentId, ProfileUpdate, VideoAnnouncement, MAX_GOSSIP_MESSAGE_SIZE,
+    from_cbor_slice, ContentId, ProfileUpdate, VideoAnnouncement, MAX_CHANNEL_ANNOUNCEMENTS,
+    MAX_GOSSIP_MESSAGE_SIZE,
 };
 
 use crate::node::Node;
@@ -124,6 +125,16 @@ async fn handle(node: &Node, event: NetworkEvent) {
             tracing::trace!(peer = %peer, %cid, served = matches!(response, BlockResponse::Found(_)), "block request");
             responder.respond(response).await;
         }
+        NetworkEvent::ChannelRequested {
+            peer,
+            public_key,
+            since,
+            responder,
+        } => {
+            let announcements = serve_channel(node, &public_key, since);
+            tracing::trace!(peer = %peer, count = announcements.len(), "channel request");
+            responder.respond(announcements).await;
+        }
     }
 }
 
@@ -191,6 +202,35 @@ pub(crate) fn ingest_profile(node: &Node, data: &[u8]) -> Ingest {
         Ok(false) => Ingest::Duplicate,
         Err(e) => Ingest::Rejected(format!("database error: {e}")),
     }
+}
+
+/// Answer "what has this creator published?" from what we happen to hold.
+///
+/// Every announcement returned is signed by the creator, so this node is not
+/// being trusted for any of it — which is exactly why a subscriber can ask
+/// anybody rather than having to reach the creator's own machine.
+fn serve_channel(node: &Node, public_key: &[u8], since: u64) -> Vec<VideoAnnouncement> {
+    let Ok(key) = ovn_identity::PublicKey::from_bytes(public_key) else {
+        return Vec::new();
+    };
+    // Somebody this node has blocked is somebody it does not pass on.
+    if node.database().is_creator_blocked(&key).unwrap_or(false) {
+        return Vec::new();
+    }
+    let rows = match node.database().announcements_by_creator(
+        &key.to_hex(),
+        since,
+        MAX_CHANNEL_ANNOUNCEMENTS,
+    ) {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read a channel from the database");
+            return Vec::new();
+        }
+    };
+    rows.iter()
+        .filter_map(|bytes| from_cbor_slice::<VideoAnnouncement>(bytes).ok())
+        .collect()
 }
 
 /// Answer a block request from local storage.

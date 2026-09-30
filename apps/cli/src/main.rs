@@ -54,6 +54,9 @@ enum Command {
     Peer(PeerCommand),
     /// A link others can use to reach this node.
     ShareLink,
+    /// Channels: your own link, and the creators you subscribe to.
+    #[command(subcommand)]
+    Channel(ChannelCommand),
     /// Open the web interface in a browser.
     Ui(UiArgs),
     /// Publish, list and fetch videos.
@@ -97,6 +100,35 @@ struct UiArgs {
     /// Print the links instead of opening a browser.
     #[arg(long)]
     print: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum ChannelCommand {
+    /// Print a link others can use to subscribe to you.
+    Link,
+    /// Subscribe to a creator using their channel link.
+    Subscribe {
+        /// An `ourvideo://c/…` link.
+        link: String,
+    },
+    /// Stop subscribing. Videos already discovered are kept.
+    Unsubscribe {
+        /// Creator public key, as `ourvideo channel list` shows it.
+        public_key: String,
+    },
+    /// Channels you subscribe to.
+    List,
+    /// Everything this device knows one creator has published.
+    Show {
+        /// Creator public key.
+        public_key: String,
+    },
+    /// Go and ask whether your channels have published anything new.
+    Refresh {
+        /// Only this creator, rather than all of them.
+        #[arg(long)]
+        public_key: Option<String>,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -421,6 +453,44 @@ async fn run_client_command(command: Command, data_dir: PathBuf, as_json: bool) 
         }
 
         Command::Status => (client.get("/v1/status").await?, Box::new(render::status)),
+
+        Command::Channel(ChannelCommand::Link) => (
+            client.get("/v1/channel/link").await?,
+            Box::new(render::channel_link),
+        ),
+        Command::Channel(ChannelCommand::Subscribe { link }) => (
+            client
+                .post("/v1/subscriptions", json!({ "link": link }))
+                .await?,
+            Box::new(render::subscribed),
+        ),
+        Command::Channel(ChannelCommand::Unsubscribe { public_key }) => {
+            client
+                .delete(&format!("/v1/subscriptions/{public_key}"))
+                .await?;
+            println!("Unsubscribed. The videos you already have are still there.");
+            return Ok(());
+        }
+        Command::Channel(ChannelCommand::List) => (
+            client.get("/v1/subscriptions").await?,
+            Box::new(render::subscriptions),
+        ),
+        Command::Channel(ChannelCommand::Show { public_key }) => (
+            client
+                .get(&format!("/v1/channels/{public_key}/videos"))
+                .await?,
+            Box::new(|v| render::videos(v, "This creator has published nothing you know about.")),
+        ),
+        Command::Channel(ChannelCommand::Refresh { public_key }) => {
+            let path = match &public_key {
+                Some(key) => format!("/v1/channels/{key}/refresh"),
+                None => "/v1/subscriptions/refresh".to_string(),
+            };
+            (
+                client.post(&path, json!({})).await?,
+                Box::new(render::refreshed),
+            )
+        }
 
         Command::Stop => {
             client.post("/v1/shutdown", json!({})).await?;

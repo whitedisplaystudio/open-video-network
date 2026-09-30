@@ -15,7 +15,7 @@ use libp2p::Multiaddr;
 use ovn_protocol::NodeDescriptor;
 
 pub use fetch::{fetch_descriptor, DescriptorFetcher};
-pub use link::{parse_share_link, share_link, Target};
+pub use link::{channel_link, parse_channel_link, parse_share_link, share_link, Target};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryError {

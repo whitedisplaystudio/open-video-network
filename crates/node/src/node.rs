@@ -12,13 +12,15 @@ use ovn_content::{
     extract_thumbnail, looks_like_jpeg, probe_duration_secs, BlockStore, VideoManifest,
 };
 use ovn_database::{
-    CacheSummary, Database, PeerRecord, PeerSource, VideoRecord, VideoUpsert, WatchEvent,
+    CacheSummary, Database, PeerRecord, PeerSource, Subscription, VideoRecord, VideoUpsert,
+    WatchEvent,
 };
 use ovn_discovery::{dial_addresses, DescriptorFetcher, Target};
 use ovn_identity::{Identity, PublicKey};
 use ovn_network::{Network, NetworkStatus, PeerId};
 use ovn_protocol::{
-    to_cbor_vec, Capability, ContentId, NewVideo, NodeDescriptor, ProfileUpdate, VideoAnnouncement,
+    now_secs, to_cbor_vec, Capability, ChannelLink, ContentId, NewVideo, NodeDescriptor,
+    ProfileUpdate, VideoAnnouncement, MAX_CHANNEL_ANNOUNCEMENTS,
 };
 use ovn_recommendation::{Engine, PreferenceModel, Recommendation};
 use ovn_storage::{EvictionReport, Storage};
@@ -53,6 +55,16 @@ const PROVIDER_CACHE_TTL: Duration = Duration::from_secs(30);
 /// Videos to remember providers for. Small: this exists to make a burst of
 /// Range requests for one video cheap, not to be a second routing table.
 const PROVIDER_CACHE_ENTRIES: usize = 64;
+
+/// How many peers to ask about one channel before settling for what we got.
+///
+/// Answers are signed, so asking more is about reaching somebody who has the
+/// news rather than about outvoting a liar.
+const CHANNEL_PEERS_TO_ASK: usize = 6;
+
+/// How many creators this node offers to answer for. A cap, because each one
+/// is a DHT record to keep republished.
+const CHANNELS_TO_ADVERTISE: usize = 256;
 
 /// How many previously known peers to dial on start.
 const STARTUP_DIAL_LIMIT: usize = 16;
@@ -165,6 +177,15 @@ impl Drop for ReadAhead {
             task.abort();
         }
     }
+}
+
+/// What subscribing to a channel did.
+#[derive(Clone, Debug)]
+pub struct SubscribeReport {
+    pub public_key: String,
+    pub display_name: String,
+    /// How many of that creator's videos this device had not seen before.
+    pub new_videos: usize,
 }
 
 /// What a fetch did.
@@ -350,6 +371,9 @@ impl Node {
                 (peer.to_base58(), String::new(), vec![addr])
             }
             Target::ShareLink(descriptor) => self.add_peer_from_descriptor(&descriptor).await?,
+            // Both are `ourvideo://` links and people will paste the wrong
+            // one. Say which is which rather than fail somewhere obscure.
+            Target::Channel(_) => return Err(NodeError::NotANodeLink),
             Target::Url(url) => {
                 let descriptor = DescriptorFetcher::new()?.fetch(&url).await?;
                 self.add_peer_from_descriptor(&descriptor).await?
@@ -412,6 +436,216 @@ impl Node {
             peer_id: descriptor.peer_id.clone(),
             reason: last_error.map(|e| e.to_string()).unwrap_or_default(),
         })
+    }
+
+    // ------------------------------------------------------------ channels
+
+    /// A link that lets somebody subscribe to this node's creator identity.
+    ///
+    /// The addresses in it are hints for finding the channel quickly; the
+    /// public key is what the subscription is actually to, which is why a
+    /// subscription survives this machine moving, changing address, or being
+    /// replaced entirely.
+    pub fn channel_link(&self) -> Result<String> {
+        let addresses = self
+            .advertised_addresses()
+            .iter()
+            .map(|a| a.to_string())
+            .collect();
+        let link = ChannelLink::sign(
+            self.inner.config.node_name.clone(),
+            addresses,
+            &self.inner.identity,
+        )?;
+        Ok(ovn_discovery::channel_link(&link)?)
+    }
+
+    /// Subscribe to whatever a channel link names, and immediately go looking
+    /// for what that creator has published.
+    ///
+    /// Subscribing is local: nothing is announced, and the creator is not
+    /// told. What changes is that this node now knows to go asking.
+    pub async fn subscribe_channel(&self, input: &str) -> Result<SubscribeReport> {
+        let link = match Target::parse(input)? {
+            Target::Channel(link) => *link,
+            _ => return Err(NodeError::NotAChannelLink),
+        };
+        link.verify()?;
+        let creator = link.creator()?;
+        let hex = creator.to_hex();
+
+        self.inner
+            .db
+            .subscribe(&hex, &link.display_name, &link.addresses)?;
+
+        // The hints are worth dialling once: they are the fastest route to
+        // the creator's own node, which is the one most likely to hold
+        // everything.
+        for addr in dialable_hints(&link.addresses, &creator) {
+            let _ = self.inner.network.dial(addr).await;
+        }
+
+        let found = self.refresh_channel(&creator).await.unwrap_or(0);
+        Ok(SubscribeReport {
+            public_key: hex,
+            display_name: link.display_name,
+            new_videos: found,
+        })
+    }
+
+    pub fn unsubscribe(&self, key: &PublicKey) -> Result<()> {
+        self.inner.db.set_following(key, false)?;
+        Ok(())
+    }
+
+    pub fn subscriptions(&self) -> Result<Vec<Subscription>> {
+        Ok(self.inner.db.subscriptions()?)
+    }
+
+    /// Everything this device knows that a creator has published.
+    pub fn channel_videos(&self, key: &PublicKey) -> Result<Vec<VideoRecord>> {
+        Ok(self.inner.db.videos_by_creator(&key.to_hex())?)
+    }
+
+    /// Go and ask whether a channel has published anything new.
+    ///
+    /// This is what makes a subscription mean something. Gossip already
+    /// delivers announcements to whoever happens to be connected when they
+    /// are made, but "happens to be connected" is not a promise. Asking is.
+    ///
+    /// Who gets asked, in order of how likely they are to know: the nodes the
+    /// channel link pointed at, then whoever the DHT says can answer for this
+    /// creator, then peers we are connected to anyway. Every answer is
+    /// checked against the creator's signature, so none of them is trusted.
+    pub async fn refresh_channel(&self, key: &PublicKey) -> Result<usize> {
+        let hex = key.to_hex();
+        let subscription = self.inner.db.subscription(&hex)?;
+        let since = subscription.as_ref().map(|s| s.last_checked).unwrap_or(0) as u64;
+        let public_key = key.to_vec();
+
+        let mut asked: HashSet<PeerId> = HashSet::new();
+        let mut candidates: Vec<PeerId> = Vec::new();
+
+        if let Some(subscription) = &subscription {
+            for addr in dialable_hints(&subscription.addresses, key) {
+                if let Ok(peer) = self.inner.network.dial(addr).await {
+                    candidates.push(peer);
+                }
+            }
+        }
+        if let Ok(providers) = self
+            .inner
+            .network
+            .channel_providers(public_key.clone())
+            .await
+        {
+            candidates.extend(providers);
+        }
+        if let Ok(status) = self.inner.network.status().await {
+            candidates.extend(status.connected_peers);
+        }
+
+        let mut stored = 0usize;
+        for peer in candidates {
+            if peer == self.inner.network.local_peer_id() || !asked.insert(peer) {
+                continue;
+            }
+            if asked.len() > CHANNEL_PEERS_TO_ASK {
+                break;
+            }
+            let answers = match self
+                .inner
+                .network
+                .request_channel(peer, public_key.clone(), since)
+                .await
+            {
+                Ok(answers) => answers,
+                Err(e) => {
+                    tracing::debug!(%peer, error = %e, "a peer could not answer about a channel");
+                    continue;
+                }
+            };
+            for announcement in answers.into_iter().take(MAX_CHANNEL_ANNOUNCEMENTS) {
+                // The peer chose what to send. It did not choose what it
+                // says: the signature is the creator's, and an announcement
+                // by somebody else is not an answer to this question.
+                if announcement.verify().is_err() {
+                    continue;
+                }
+                match announcement.creator() {
+                    Ok(creator) if creator.to_hex() == hex => {}
+                    _ => continue,
+                }
+                let bytes = match to_cbor_vec(&announcement) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                };
+                if matches!(
+                    crate::events::ingest_announcement(self, &bytes),
+                    crate::events::Ingest::Stored
+                ) {
+                    stored += 1;
+                }
+            }
+        }
+
+        self.inner.db.mark_channel_checked(&hex, now_secs())?;
+        if stored > 0 {
+            self.emit(NodeEvent::ChannelUpdated {
+                public_key: hex,
+                new_videos: stored,
+            });
+        }
+        Ok(stored)
+    }
+
+    /// Check every subscription. Run on start and on demand.
+    pub async fn refresh_subscriptions(&self) -> usize {
+        let subscriptions = match self.inner.db.subscriptions() {
+            Ok(subscriptions) => subscriptions,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read subscriptions");
+                return 0;
+            }
+        };
+        let mut total = 0;
+        for subscription in subscriptions {
+            let Ok(key) = PublicKey::from_hex(&subscription.public_key) else {
+                continue;
+            };
+            total += self.refresh_channel(&key).await.unwrap_or(0);
+        }
+        total
+    }
+
+    /// Offer to answer for the creators this node holds anything by.
+    ///
+    /// This is what lets a subscriber find an answer when the creator's own
+    /// machine is off: somebody else who kept the announcements says so.
+    pub async fn announce_channels_held(&self) -> usize {
+        let creators = match self.inner.db.creators_held(CHANNELS_TO_ADVERTISE) {
+            Ok(creators) => creators,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read which creators we hold");
+                return 0;
+            }
+        };
+        let mut announced = 0;
+        for hex in creators {
+            let Ok(key) = PublicKey::from_hex(&hex) else {
+                continue;
+            };
+            if self
+                .inner
+                .network
+                .provide_channel(key.to_vec())
+                .await
+                .is_ok()
+            {
+                announced += 1;
+            }
+        }
+        announced
     }
 
     pub fn peers(&self) -> Result<Vec<PeerRecord>> {
@@ -518,6 +752,17 @@ impl Node {
             .await
         {
             tracing::warn!(error = %e, "could not announce as a provider");
+        }
+        // And that we can answer for this channel, which is how a subscriber
+        // finds this video without having been connected when it was
+        // announced.
+        if let Err(e) = self
+            .inner
+            .network
+            .provide_channel(self.inner.identity.public_key().to_vec())
+            .await
+        {
+            tracing::warn!(error = %e, "could not announce the channel");
         }
         let announced = match self.inner.network.publish_announcement(bytes).await {
             Ok(()) => true,
@@ -1170,6 +1415,31 @@ pub(crate) fn build_inner(
         providers: Mutex::new(HashMap::new()),
         config,
     }))
+}
+
+/// Turn the hints in a channel link into addresses that can actually be
+/// dialled.
+///
+/// A hint is written without a peer id, the way a node descriptor writes its
+/// addresses. Dialling needs one, and here it does not have to be carried or
+/// trusted: a node's peer id is derived from the same key the channel is
+/// named by, so it can be computed from the link itself.
+fn dialable_hints(addresses: &[String], creator: &PublicKey) -> Vec<Multiaddr> {
+    let peer = creator.peer_id();
+    addresses
+        .iter()
+        .filter_map(|address| address.parse::<Multiaddr>().ok())
+        .map(|addr| {
+            if addr
+                .iter()
+                .any(|p| matches!(p, libp2p::multiaddr::Protocol::P2p(_)))
+            {
+                addr
+            } else {
+                addr.with(libp2p::multiaddr::Protocol::P2p(peer))
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn write_runtime_info(

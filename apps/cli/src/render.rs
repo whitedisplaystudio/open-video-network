@@ -389,6 +389,65 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+pub fn channel_link(value: &Value) {
+    let link = str_field(value, "link");
+    println!();
+    println!("Your channel link. Anyone who has it can subscribe:");
+    println!();
+    println!("  {link}");
+    println!();
+    println!("Subscribing follows you, not this machine: it keeps working if");
+    println!("you move, change address, or replace this node entirely.");
+}
+
+pub fn subscribed(value: &Value) {
+    let name = str_field(value, "displayName");
+    let found = value.get("newVideos").and_then(|v| v.as_u64()).unwrap_or(0);
+    println!();
+    if name.is_empty() {
+        println!("Subscribed.");
+    } else {
+        println!("Subscribed to {name}.");
+    }
+    match found {
+        0 => println!("Nothing new right now. Anything they publish will turn up."),
+        1 => println!("Found 1 video you had not seen."),
+        n => println!("Found {n} videos you had not seen."),
+    }
+}
+
+pub fn subscriptions(value: &Value) {
+    let rows = value.as_array().cloned().unwrap_or_default();
+    if rows.is_empty() {
+        println!("You are not subscribed to anyone.");
+        println!();
+        println!("Ask somebody for their channel link and run:");
+        println!("    ourvideo channel subscribe <link>");
+        return;
+    }
+    println!("{}  {}  VIDEOS HERE", pad("CHANNEL", 24), pad("KEY", 22));
+    for row in &rows {
+        let name = str_field(row, "displayName");
+        let name = if name.is_empty() { "(unnamed)" } else { name };
+        println!(
+            "{}  {}  {}",
+            pad(name, 24),
+            pad(&short_cid(str_field(row, "publicKey")), 22),
+            row.get("videos").and_then(|v| v.as_u64()).unwrap_or(0)
+        );
+    }
+    println!();
+    println!("{} channels", rows.len());
+}
+
+pub fn refreshed(value: &Value) {
+    match value.get("newVideos").and_then(|v| v.as_u64()).unwrap_or(0) {
+        0 => println!("Nothing new."),
+        1 => println!("1 new video."),
+        n => println!("{n} new videos."),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

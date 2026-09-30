@@ -21,6 +21,7 @@
     <button type="button" data-page="home" data-i18n="nav.foryou">For you</button>
     <button type="button" data-page="browse" data-i18n="nav.browse">Browse</button>
     <button type="button" data-page="library" data-i18n="nav.library">Library</button>
+    <button type="button" data-page="channels" data-i18n="nav.channels">Channels</button>
   </nav>
 
   <span class="spacer"></span>
@@ -61,6 +62,39 @@
     <div class="page-head"><h1 data-i18n="viewer.library.title">Library</h1></div>
     <p class="lede" data-i18n="viewer.library.lede"></p>
     <div id="library" class="grid"></div>
+  </section>
+
+  <section class="page" data-page="channels" hidden>
+    <div class="page-head"><h1 data-i18n="viewer.channels.title">Channels</h1></div>
+    <p class="lede" data-i18n="viewer.channels.lede"></p>
+
+    <form class="card subscribe" id="subscribe-form">
+      <label for="subscribe-link" data-i18n="viewer.channels.paste"></label>
+      <div class="row">
+        <input id="subscribe-link" type="text" autocomplete="off"
+               data-i18n-placeholder="viewer.channels.placeholder">
+        <button type="submit" class="primary" data-i18n="viewer.channels.subscribe"></button>
+      </div>
+      <p class="hint" data-i18n="viewer.channels.hint"></p>
+    </form>
+
+    <div class="row channels-actions">
+      <button type="button" id="refresh-channels" class="small"
+              data-i18n="viewer.channels.check"></button>
+      <span id="channels-count" class="badge"></span>
+    </div>
+
+    <div id="channels"></div>
+  </section>
+
+  <section class="page" data-page="channel" hidden>
+    <div class="page-head">
+      <h1 id="channel-name">…</h1>
+      <button type="button" id="channel-unsubscribe" class="small danger"
+              data-i18n="viewer.channel.unsubscribe"></button>
+    </div>
+    <p class="lede" id="channel-key"></p>
+    <div id="channel-videos" class="grid"></div>
   </section>
 
   <section class="page" data-page="search" hidden>

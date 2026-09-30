@@ -491,6 +491,28 @@ function currentPage() {
   return location.hash.replace(/^#\/?/, '').split('/')[0] || 'overview';
 }
 
+// Your own channel link, so it can be handed to somebody.
+async function loadChannelLink() {
+  const field = $('channel-link');
+  if (!field) return;
+  try {
+    const { link } = await get('/v1/channel/link');
+    field.value = link;
+  } catch {
+    field.value = '';
+  }
+  $('copy-channel-link')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(field.value);
+      toast(t('admin.channel.copied'));
+    } catch {
+      // Clipboard access can be refused; selecting it is the fallback that
+      // always works.
+      field.select();
+    }
+  });
+}
+
 async function boot() {
   // Language first, so nothing renders in English and then flips.
   await languagePicker($('language'));
@@ -518,6 +540,7 @@ async function boot() {
     reportError(error);
   }
 
+  loadChannelLink();
   sourceNotice();
   wireEvents();
   poll(() => loadOverview(), 5000);

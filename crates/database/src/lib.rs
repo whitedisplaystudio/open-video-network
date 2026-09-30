@@ -27,7 +27,7 @@ pub use cache::{CacheEntry, CacheSummary};
 pub use moderation::BlockEntry;
 pub use peers::{PeerRecord, PeerSource};
 pub use preferences::TagWeight;
-pub use videos::{CreatorRecord, VideoRecord, VideoUpsert};
+pub use videos::{CreatorRecord, Subscription, VideoRecord, VideoUpsert};
 pub use watch::{WatchEvent, WatchRecord, WatchSummary};
 
 #[derive(Debug, thiserror::Error)]

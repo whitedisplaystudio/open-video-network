@@ -9,7 +9,7 @@ use libp2p::request_response::ResponseChannel;
 use libp2p::{Multiaddr, PeerId};
 use tokio::sync::{mpsc, oneshot};
 
-use ovn_protocol::ContentId;
+use ovn_protocol::{ChannelResponse, ContentId, VideoAnnouncement};
 
 use crate::behaviour::BlockResponse;
 use crate::{NetworkError, Result};
@@ -43,6 +43,24 @@ pub(crate) enum Command {
         peer: PeerId,
         cid: ContentId,
         reply: oneshot::Sender<Result<Vec<u8>>>,
+    },
+    ProvideChannel {
+        public_key: Vec<u8>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    ChannelProviders {
+        public_key: Vec<u8>,
+        reply: oneshot::Sender<Vec<PeerId>>,
+    },
+    RequestChannel {
+        peer: PeerId,
+        public_key: Vec<u8>,
+        since: u64,
+        reply: oneshot::Sender<Result<Vec<VideoAnnouncement>>>,
+    },
+    RespondChannel {
+        channel: Box<ResponseChannel<ChannelResponse>>,
+        response: ChannelResponse,
     },
     RespondBlock {
         channel: Box<ResponseChannel<BlockResponse>>,
@@ -130,6 +148,15 @@ pub enum NetworkEvent {
         cid: ContentId,
         responder: BlockResponder,
     },
+    /// A peer wants to know what a creator has published. The answer is
+    /// signed announcements, so relaying somebody else's is not a claim about
+    /// them.
+    ChannelRequested {
+        peer: PeerId,
+        public_key: Vec<u8>,
+        since: u64,
+        responder: ChannelResponder,
+    },
     /// We learned whether other peers can dial us.
     ReachabilityChanged {
         reachability: Reachability,
@@ -171,6 +198,35 @@ impl BlockResponder {
             .send(Command::RespondBlock {
                 channel: self.channel,
                 response,
+            })
+            .await;
+    }
+}
+
+/// Lets the node answer a channel request without touching the swarm.
+#[derive(Debug)]
+pub struct ChannelResponder {
+    channel: Box<ResponseChannel<ChannelResponse>>,
+    commands: mpsc::Sender<Command>,
+}
+
+impl ChannelResponder {
+    pub(crate) fn new(
+        channel: ResponseChannel<ChannelResponse>,
+        commands: mpsc::Sender<Command>,
+    ) -> Self {
+        Self {
+            channel: Box::new(channel),
+            commands,
+        }
+    }
+
+    pub async fn respond(self, announcements: Vec<VideoAnnouncement>) {
+        let _ = self
+            .commands
+            .send(Command::RespondChannel {
+                channel: self.channel,
+                response: ChannelResponse { announcements },
             })
             .await;
     }
@@ -272,6 +328,38 @@ impl Network {
     pub async fn request_block(&self, peer: PeerId, cid: ContentId) -> Result<Vec<u8>> {
         self.request(|reply| Command::RequestBlock { peer, cid, reply })
             .await?
+    }
+
+    /// Announce to the DHT that we can answer for this creator.
+    pub async fn provide_channel(&self, public_key: Vec<u8>) -> Result<()> {
+        self.request(|reply| Command::ProvideChannel { public_key, reply })
+            .await?
+    }
+
+    /// Ask the DHT who can answer for this creator.
+    pub async fn channel_providers(&self, public_key: Vec<u8>) -> Result<Vec<PeerId>> {
+        self.request(|reply| Command::ChannelProviders { public_key, reply })
+            .await
+    }
+
+    /// Ask one peer what a creator has published since `since`.
+    ///
+    /// The announcements come back unverified: every one is signed by the
+    /// creator, and the caller checks that rather than trusting the peer that
+    /// handed them over.
+    pub async fn request_channel(
+        &self,
+        peer: PeerId,
+        public_key: Vec<u8>,
+        since: u64,
+    ) -> Result<Vec<VideoAnnouncement>> {
+        self.request(|reply| Command::RequestChannel {
+            peer,
+            public_key,
+            since,
+            reply,
+        })
+        .await?
     }
 
     pub async fn status(&self) -> Result<NetworkStatus> {

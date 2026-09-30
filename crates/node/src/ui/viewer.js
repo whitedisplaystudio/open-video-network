@@ -1,7 +1,7 @@
 // The viewer UI: browse, search, watch, and a feed computed on this device.
 
 import {
-  get, post, bytes, duration, date, decimal, el, mount, empty, toast, reportError,
+  get, post, del, bytes, duration, date, decimal, el, mount, empty, toast, reportError,
   liveEvents, poll, router, go, shortId, t, languagePicker, whenLocaleChanges,
   sourceNotice,
 } from '/assets/common.js';
@@ -342,6 +342,93 @@ function currentPage() {
   return location.hash.replace(/^#\/?/, '').split('/')[0] || 'home';
 }
 
+// ---------------------------------------------------------------- channels
+
+async function loadChannels() {
+  const rows = await get('/v1/subscriptions');
+  const list = $('channels');
+  $('channels-count').textContent = t('viewer.channels.count', { count: rows.length });
+  if (rows.length === 0) {
+    mount(list, [
+      el('p', { class: 'empty' }, [t('viewer.channels.empty')]),
+    ]);
+    return;
+  }
+  mount(
+    list,
+    rows.map((row) =>
+      el('button', { class: 'channel-row', type: 'button', 'data-key': row.publicKey }, [
+        el('span', { class: 'channel-name' }, [row.displayName || t('viewer.channels.unnamed')]),
+        el('span', { class: 'channel-key mono' }, [shortId(row.publicKey)]),
+        el('span', { class: 'channel-count' }, [
+          t('viewer.channels.videos', { count: row.videos }),
+        ]),
+      ])
+    )
+  );
+  for (const button of list.querySelectorAll('.channel-row')) {
+    button.addEventListener('click', () => go('channel', button.dataset.key));
+  }
+}
+
+async function openChannel(key) {
+  if (!key) return;
+  const rows = await get('/v1/subscriptions');
+  const channel = rows.find((row) => row.publicKey === key);
+  $('channel-name').textContent =
+    channel?.displayName || t('viewer.channels.unnamed');
+  $('channel-key').textContent = key;
+  $('channel-unsubscribe').onclick = async () => {
+    await del(`/v1/subscriptions/${key}`);
+    toast(t('viewer.channel.unsubscribed'));
+    go('channels');
+  };
+  const videos = await get(`/v1/channels/${key}/videos`);
+  if (videos.length === 0) {
+    mount($('channel-videos'), [el('p', { class: 'empty' }, [t('viewer.channel.nothing')])]);
+    return;
+  }
+  mount($('channel-videos'), videos.map(videoCard));
+}
+
+function wireChannels() {
+  $('subscribe-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const link = $('subscribe-link').value.trim();
+    if (!link) return;
+    try {
+      const report = await post('/v1/subscriptions', { link });
+      $('subscribe-link').value = '';
+      const name = report.displayName || t('viewer.channels.unnamed');
+      // Zero reads badly as a plural form, so it gets a sentence of its own.
+      toast(
+        report.newVideos === 0
+          ? t('viewer.channels.subscribed_none', { name })
+          : t('viewer.channels.subscribed', { name, count: report.newVideos })
+      );
+      await loadVideos();
+      await loadChannels();
+    } catch (error) {
+      reportError(error);
+    }
+  });
+
+  $('refresh-channels').addEventListener('click', async () => {
+    try {
+      const report = await post('/v1/subscriptions/refresh', {});
+      toast(
+        report.newVideos === 0
+          ? t('viewer.channels.checked_none')
+          : t('viewer.channels.checked', { count: report.newVideos })
+      );
+      await loadVideos();
+      await loadChannels();
+    } catch (error) {
+      reportError(error);
+    }
+  });
+}
+
 function currentArg() {
   return decodeURIComponent(location.hash.replace(/^#\/?/, '').split('/').slice(1).join('/'));
 }
@@ -351,6 +438,8 @@ async function renderCurrent() {
   if (page === 'watch') return openWatch(currentArg());
   if (page === 'search') return runSearch(currentArg());
   if (page === 'home') return loadFeed();
+  if (page === 'channels') return loadChannels();
+  if (page === 'channel') return openChannel(currentArg());
   return undefined;
 }
 
@@ -362,6 +451,8 @@ async function boot() {
     event.preventDefault();
     go('search', $('search-input').value);
   });
+
+  wireChannels();
 
   router((page) => {
     if (page !== 'watch' && playerCleanup) {

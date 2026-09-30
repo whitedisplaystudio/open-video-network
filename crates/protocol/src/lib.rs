@@ -16,6 +16,7 @@
 //!   `protocol/SPECIFICATION.md`.
 
 mod announcement;
+mod channel;
 mod codec;
 mod content_id;
 mod descriptor;
@@ -23,6 +24,9 @@ mod envelope;
 mod limits;
 
 pub use announcement::{NewVideo, ProfileUpdate, VideoAnnouncement};
+pub use channel::{
+    channel_provider_key, ChannelLink, ChannelRequest, ChannelResponse, MAX_CHANNEL_ANNOUNCEMENTS,
+};
 pub use codec::{from_cbor_slice, to_cbor_vec};
 pub use content_id::{ContentId, DAG_CBOR_CODEC, RAW_CODEC};
 pub use descriptor::{Capability, NodeDescriptor};
@@ -41,6 +45,9 @@ pub const TOPIC_VIDEO_ANNOUNCE: &str = "/ovn/video-announce/1";
 pub const TOPIC_PROFILE_UPDATE: &str = "/ovn/profile-update/1";
 /// libp2p request-response protocol used to fetch content chunks.
 pub const PROTOCOL_CHUNK: &str = "/ovn/chunk/1.0.0";
+
+/// Asking a peer what a creator has published.
+pub const PROTOCOL_CHANNEL: &str = "/ovn/channel/1.0.0";
 /// libp2p identify protocol name.
 pub const PROTOCOL_IDENTIFY: &str = "/ovn/1.0.0";
 /// Kademlia protocol name. Keeping our own name stops us from polluting, and

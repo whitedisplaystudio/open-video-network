@@ -19,6 +19,11 @@ pub const EVENT_CAPACITY: usize = 256;
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum NodeEvent {
+    /// A channel this device subscribes to has published something new.
+    ChannelUpdated {
+        public_key: String,
+        new_videos: usize,
+    },
     #[serde(rename_all = "camelCase")]
     PeerConnected { peer_id: String },
     #[serde(rename_all = "camelCase")]

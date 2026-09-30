@@ -12,13 +12,18 @@ use libp2p::{dcutr, gossipsub, identify, kad, mdns, relay, request_response, upn
 use libp2p::{Multiaddr, PeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
-use ovn_protocol::{ContentId, TOPIC_PROFILE_UPDATE, TOPIC_VIDEO_ANNOUNCE};
+use ovn_protocol::{
+    ChannelRequest, ChannelResponse, ContentId, VideoAnnouncement, TOPIC_PROFILE_UPDATE,
+    TOPIC_VIDEO_ANNOUNCE,
+};
 
 use crate::behaviour::{
-    provider_key, speaks_relay_hop, Behaviour, BehaviourEvent, BlockRequest, BlockResponse,
+    channel_key, provider_key, speaks_relay_hop, Behaviour, BehaviourEvent, BlockRequest,
+    BlockResponse,
 };
 use crate::handle::{
-    BlockResponder, Command, DiscoverySource, NetworkEvent, NetworkStatus, Reachability,
+    BlockResponder, ChannelResponder, Command, DiscoverySource, NetworkEvent, NetworkStatus,
+    Reachability,
 };
 use crate::rate_limit::RateLimiter;
 use crate::{NetworkConfig, NetworkError, Result};
@@ -44,6 +49,10 @@ pub(crate) struct EventLoop {
     pending_dials: HashMap<PeerId, Vec<PendingDial>>,
     pending_providers: HashMap<kad::QueryId, (oneshot::Sender<Vec<PeerId>>, HashSet<PeerId>)>,
     pending_blocks: HashMap<request_response::OutboundRequestId, oneshot::Sender<Result<Vec<u8>>>>,
+    pending_channels: HashMap<
+        request_response::OutboundRequestId,
+        oneshot::Sender<Result<Vec<VideoAnnouncement>>>,
+    >,
     providing: HashSet<ContentId>,
 
     /// Whether anyone can dial us, as far as we have been told.
@@ -77,6 +86,7 @@ impl EventLoop {
             pending_dials: HashMap::new(),
             pending_providers: HashMap::new(),
             pending_blocks: HashMap::new(),
+            pending_channels: HashMap::new(),
             providing: HashSet::new(),
             // An operator who passed `--external-addr` has answered the
             // question already.
@@ -264,6 +274,45 @@ impl EventLoop {
                     .blocks
                     .send_request(&peer, BlockRequest { cid });
                 self.pending_blocks.insert(id, reply);
+            }
+            Command::ProvideChannel { public_key, reply } => {
+                let result = self
+                    .swarm
+                    .behaviour_mut()
+                    .kad
+                    .start_providing(channel_key(&public_key))
+                    .map(|_| ())
+                    .map_err(|e| NetworkError::Dht(e.to_string()));
+                let _ = reply.send(result);
+            }
+            Command::ChannelProviders { public_key, reply } => {
+                let query = self
+                    .swarm
+                    .behaviour_mut()
+                    .kad
+                    .get_providers(channel_key(&public_key));
+                self.pending_providers
+                    .insert(query, (reply, HashSet::new()));
+            }
+            Command::RequestChannel {
+                peer,
+                public_key,
+                since,
+                reply,
+            } => {
+                let id = self
+                    .swarm
+                    .behaviour_mut()
+                    .channels
+                    .send_request(&peer, ChannelRequest { public_key, since });
+                self.pending_channels.insert(id, reply);
+            }
+            Command::RespondChannel { channel, response } => {
+                let _ = self
+                    .swarm
+                    .behaviour_mut()
+                    .channels
+                    .send_response(*channel, response);
             }
             Command::RespondBlock { channel, response } => {
                 // Failure here only means the requester went away.
@@ -576,6 +625,47 @@ impl EventLoop {
                             });
                         }
                     }
+                }
+            }
+            BehaviourEvent::Channels(request_response::Event::Message {
+                peer, message, ..
+            }) => match message {
+                request_response::Message::Request {
+                    request, channel, ..
+                } => {
+                    // Answering costs a database read, so it shares the block
+                    // budget rather than opening a second way to spend ours.
+                    if !self.block_limiter.allow(&peer) {
+                        let _ = self
+                            .swarm
+                            .behaviour_mut()
+                            .channels
+                            .send_response(channel, ChannelResponse::default());
+                        return;
+                    }
+                    self.emit(NetworkEvent::ChannelRequested {
+                        peer,
+                        public_key: request.public_key,
+                        since: request.since,
+                        responder: ChannelResponder::new(channel, self.command_sender.clone()),
+                    });
+                }
+                request_response::Message::Response {
+                    request_id,
+                    response,
+                } => {
+                    if let Some(reply) = self.pending_channels.remove(&request_id) {
+                        let _ = reply.send(Ok(response.announcements));
+                    }
+                }
+            },
+            BehaviourEvent::Channels(request_response::Event::OutboundFailure {
+                request_id,
+                error,
+                ..
+            }) => {
+                if let Some(reply) = self.pending_channels.remove(&request_id) {
+                    let _ = reply.send(Err(NetworkError::Transfer(error.to_string())));
                 }
             }
             BehaviourEvent::Blocks(request_response::Event::OutboundFailure {

@@ -154,6 +154,12 @@ ourvideo recommendation explain <CID>
 | `ourvideo doctor` | Check the installation and say what to do about anything wrong. |
 | `ourvideo stop` | Stop the running node. |
 | `ourvideo share-link` | A link others can use to reach you. |
+| `ourvideo channel link` | A link others can use to subscribe to **you**, not this machine. |
+| `ourvideo channel subscribe <link>` | Subscribe to a creator, and fetch what they have already published. |
+| `ourvideo channel list` | Channels you subscribe to. |
+| `ourvideo channel show <KEY>` | Everything this device knows one creator published. |
+| `ourvideo channel refresh` | Go and ask whether your channels have anything new. |
+| `ourvideo channel unsubscribe <KEY>` | Stop. Videos already discovered are kept. |
 | `ourvideo ui [--admin] [--print]` | Open the web interface in a browser. |
 | `ourvideo peer list` | Known peers and how you met them. |
 | `ourvideo peer add <URL-or-link>` | Join through a URL, an `ourvideo://` link, or a multiaddr. |
@@ -358,6 +364,42 @@ nothing from anywhere but this node, and the node refuses any request whose
 Thumbnails are generated with FFmpeg when it is installed, stored as ordinary
 content blocks, and fetched from peers like anything else. Without FFmpeg,
 videos simply have no thumbnail.
+
+---
+
+## Channels
+
+A share link points at a machine. A **channel link** points at a person.
+
+```bash
+# Give this to anyone who wants to follow what you publish.
+ourvideo channel link
+
+# On their side, once:
+ourvideo channel subscribe 'ourvideo://c/…'
+```
+
+Subscribing does two things that following a machine cannot. It **finds what
+was already published** — including videos announced before you had ever heard
+of that creator, which gossip can never deliver to you. And it lets you
+**check**: `ourvideo channel refresh` goes and asks, rather than waiting and
+hoping you were connected at the right moment.
+
+It keeps working when the creator is offline. Every announcement is signed by
+the creator's own key, so any node that kept one can pass it on without being
+trusted: it cannot alter an announcement, cannot invent one, and cannot pass
+off somebody else's video as theirs. A subscriber therefore asks *whoever is
+around* — the addresses in the link, whoever the DHT says can answer, and
+peers it is connected to anyway — and verifies every answer itself.
+
+A channel is a public key, not an address. The creator can move to another
+computer, change network, or replace their node entirely, and the subscription
+still points at them.
+
+**Who you subscribe to never leaves your device.** There is no message for
+announcing a subscription, no subscriber count, and no way for a creator to
+learn that you subscribed. That is the same rule as the rest of section 32:
+who you choose to watch is part of what you watch.
 
 ---
 

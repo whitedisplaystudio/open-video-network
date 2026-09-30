@@ -32,13 +32,26 @@ use ovn_identity::Identity;
 
 pub use config::{ApiAuth, NodeConfig, RuntimeInfo, DEFAULT_API_PORT};
 pub use i18n::{Direction, LocalePack, LocaleSummary, PackSource};
-pub use node::{AddPeerReport, FetchReport, Node, NodeStatus, PublishReport, StreamPlan};
+pub use node::{
+    AddPeerReport, FetchReport, Node, NodeStatus, PublishReport, StreamPlan, SubscribeReport,
+};
+pub use ovn_database::Subscription;
 pub use ovn_network::DEFAULT_P2P_PORT;
 pub use progress::NodeEvent;
 pub use range::{parse_range, ByteRange, RangeError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum NodeError {
+    #[error(
+        "that is a channel link, not a node link. Subscribe to it with \
+         `ourvideo channel subscribe`"
+    )]
+    NotANodeLink,
+    #[error(
+        "that is not a channel link. A channel link starts `ourvideo://c/` and \
+         comes from `ourvideo channel link`"
+    )]
+    NotAChannelLink,
     #[error("could not prepare the data directory {path}: {source}")]
     DataDir {
         path: String,
@@ -199,6 +212,19 @@ pub async fn start(config: NodeConfig) -> Result<RunningNode> {
             Ok(n) if n > 0 => tracing::info!(count = n, "re-announced held content"),
             Ok(_) => {}
             Err(e) => tracing::warn!(error = %e, "could not re-announce held content"),
+        }
+        // Offer to answer about the creators we hold anything by, so that a
+        // subscriber can find their work while they are offline.
+        let channels = joining.announce_channels_held().await;
+        if channels > 0 {
+            tracing::info!(count = channels, "offering to answer for creators");
+        }
+        // And catch up on anything our own subscriptions published while this
+        // node was not running. Gossip only reaches whoever was connected at
+        // the time; this is the part that does not depend on luck.
+        let caught_up = joining.refresh_subscriptions().await;
+        if caught_up > 0 {
+            tracing::info!(count = caught_up, "new videos from channels you follow");
         }
     });
 

@@ -175,6 +175,47 @@ impl Database {
             .optional()?)
     }
 
+    /// Signed announcements by one creator, for answering a channel request.
+    ///
+    /// Blocked content is left out: a node that refused to hold something
+    /// should not be passing on the notice of it either. Bounded, because the
+    /// asker is expected to come back with a later `since` rather than pull a
+    /// whole archive in one answer.
+    pub fn announcements_by_creator(
+        &self,
+        public_key_hex: &str,
+        since: u64,
+        limit: usize,
+    ) -> Result<Vec<Vec<u8>>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT announcement FROM known_videos
+              WHERE creator_public_key = ?1
+                AND created_at > ?2
+                AND cid NOT IN (SELECT cid FROM blocked_cids)
+                AND creator_public_key NOT IN (SELECT public_key FROM blocked_creators)
+              ORDER BY created_at DESC
+              LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![public_key_hex, since as i64, limit as i64], |row| {
+            row.get(0)
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Creators this node holds anything by, so it can offer to answer for
+    /// them.
+    pub fn creators_held(&self, limit: usize) -> Result<Vec<String>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT creator_public_key FROM known_videos
+              WHERE creator_public_key NOT IN (SELECT public_key FROM blocked_creators)
+              LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Recently created videos, newest first, excluding blocked content.
     pub fn videos(&self, limit: usize, offset: usize) -> Result<Vec<VideoRecord>> {
         let conn = self.conn()?;
@@ -354,6 +395,60 @@ impl Database {
         Ok(())
     }
 
+    /// Subscribe to a channel, remembering where to go asking about it.
+    ///
+    /// Idempotent, and re-subscribing with a fresher link updates the hints
+    /// without losing when you first subscribed or when you last checked.
+    pub fn subscribe(
+        &self,
+        public_key_hex: &str,
+        display_name: &str,
+        addresses: &[String],
+    ) -> Result<()> {
+        // Newline-separated, like `tags` is space-separated: a multiaddr
+        // contains neither, and this crate needs no JSON for one column.
+        let addresses = addresses.join("\n");
+        self.conn()?.execute(
+            "INSERT INTO following (public_key, since, display_name, addresses, last_checked)
+             VALUES (?1, ?2, ?3, ?4, 0)
+             ON CONFLICT(public_key) DO UPDATE SET
+                 display_name = excluded.display_name,
+                 addresses = excluded.addresses",
+            params![public_key_hex, now_secs(), display_name, addresses],
+        )?;
+        Ok(())
+    }
+
+    pub fn subscriptions(&self) -> Result<Vec<Subscription>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT public_key, display_name, addresses, since, last_checked
+             FROM following ORDER BY since DESC",
+        )?;
+        let rows = stmt.query_map([], row_to_subscription)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn subscription(&self, public_key_hex: &str) -> Result<Option<Subscription>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT public_key, display_name, addresses, since, last_checked
+             FROM following WHERE public_key = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![public_key_hex], row_to_subscription)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Record that we have asked about this channel, so the next ask can be
+    /// narrower.
+    pub fn mark_channel_checked(&self, public_key_hex: &str, at: u64) -> Result<()> {
+        self.conn()?.execute(
+            "UPDATE following SET last_checked = ?2 WHERE public_key = ?1",
+            params![public_key_hex, at as i64],
+        )?;
+        Ok(())
+    }
+
     pub fn following(&self) -> Result<Vec<String>> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare("SELECT public_key FROM following ORDER BY since DESC")?;
@@ -368,6 +463,36 @@ impl Database {
             |row| row.get::<_, i64>(0),
         )? != 0)
     }
+}
+
+/// A channel this device has subscribed to.
+///
+/// Local-only, like everything else about what you watch: who you subscribe
+/// to is never announced, and there is no code path from here to the network
+/// other than the requests this device chooses to make.
+#[derive(Clone, Debug)]
+pub struct Subscription {
+    pub public_key: String,
+    pub display_name: String,
+    /// Where to start asking. May be empty and may be stale.
+    pub addresses: Vec<String>,
+    pub since: i64,
+    pub last_checked: i64,
+}
+
+fn row_to_subscription(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subscription> {
+    let addresses: String = row.get("addresses")?;
+    Ok(Subscription {
+        public_key: row.get("public_key")?,
+        display_name: row.get("display_name")?,
+        addresses: addresses
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_string)
+            .collect(),
+        since: row.get("since")?,
+        last_checked: row.get("last_checked")?,
+    })
 }
 
 /// Turn free user text into a safe FTS5 MATCH expression.

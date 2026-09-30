@@ -24,7 +24,8 @@ use ovn_protocol::{TOPIC_PROFILE_UPDATE, TOPIC_VIDEO_ANNOUNCE};
 pub use behaviour::{BlockRequest, BlockResponse};
 pub use config::{default_listen_addrs, NetworkConfig, DEFAULT_P2P_PORT};
 pub use handle::{
-    BlockResponder, DiscoverySource, Network, NetworkEvent, NetworkStatus, Reachability,
+    BlockResponder, ChannelResponder, DiscoverySource, Network, NetworkEvent, NetworkStatus,
+    Reachability,
 };
 pub use libp2p::{Multiaddr, PeerId};
 

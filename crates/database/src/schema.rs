@@ -3,7 +3,7 @@
 use crate::{Database, DatabaseError, Result};
 
 /// Bump this and append a migration whenever the schema changes.
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 const MIGRATION_1: &str = r#"
 -- ---------------------------------------------------------------- network
@@ -127,6 +127,21 @@ CREATE TABLE preferences (
 );
 "#;
 
+/// A subscription is a follow that also remembers where to go asking.
+///
+/// Extending the table rather than adding another one keeps the two from
+/// drifting apart: there is no state where you follow someone but are not
+/// subscribed to them, and no second place to look.
+const MIGRATION_2: &str = r#"
+ALTER TABLE following ADD COLUMN display_name TEXT NOT NULL DEFAULT '';
+-- Newline-separated multiaddrs from the channel link. Hints, not identity:
+-- a subscription outlives all of them going stale.
+ALTER TABLE following ADD COLUMN addresses TEXT NOT NULL DEFAULT '';
+-- When this channel was last asked for new work, so a refresh can ask for
+-- little rather than for everything.
+ALTER TABLE following ADD COLUMN last_checked INTEGER NOT NULL DEFAULT 0;
+"#;
+
 impl Database {
     pub(crate) fn migrate(&self) -> Result<()> {
         let conn = self.conn()?;
@@ -139,6 +154,9 @@ impl Database {
         }
         if current < 1 {
             conn.execute_batch(MIGRATION_1)?;
+        }
+        if current < 2 {
+            conn.execute_batch(MIGRATION_2)?;
         }
         if current != SCHEMA_VERSION {
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;

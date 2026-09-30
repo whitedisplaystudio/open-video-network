@@ -11,7 +11,8 @@ use libp2p::{PeerId, StreamProtocol};
 use serde::{Deserialize, Serialize};
 
 use ovn_protocol::{
-    ContentId, MAX_GOSSIP_MESSAGE_SIZE, PROTOCOL_CHUNK, PROTOCOL_IDENTIFY, PROTOCOL_KADEMLIA,
+    ChannelRequest, ChannelResponse, ContentId, MAX_GOSSIP_MESSAGE_SIZE, PROTOCOL_CHANNEL,
+    PROTOCOL_CHUNK, PROTOCOL_IDENTIFY, PROTOCOL_KADEMLIA,
 };
 
 use crate::{NetworkConfig, NetworkError, Result};
@@ -45,6 +46,10 @@ pub(crate) struct Behaviour {
     pub identify: identify::Behaviour,
     pub ping: ping::Behaviour,
     pub blocks: request_response::cbor::Behaviour<BlockRequest, BlockResponse>,
+    /// Asking a peer what a creator has published. Separate from `blocks`
+    /// because the answers are metadata, not content, and a node with no
+    /// blocks at all can still answer one.
+    pub channels: request_response::cbor::Behaviour<ChannelRequest, ChannelResponse>,
 
     // ---- getting through a NAT (section 13, and Principle 1 in practice)
     //
@@ -147,6 +152,15 @@ impl Behaviour {
             request_response::Config::default().with_request_timeout(Duration::from_secs(30)),
         );
 
+        let channels = request_response::cbor::Behaviour::new(
+            [(
+                StreamProtocol::try_from_owned(PROTOCOL_CHANNEL.to_string())
+                    .expect("static protocol name"),
+                request_response::ProtocolSupport::Full,
+            )],
+            request_response::Config::default().with_request_timeout(Duration::from_secs(30)),
+        );
+
         let upnp = Toggle::from(config.enable_upnp.then(upnp::tokio::Behaviour::default));
 
         // Relaying for other people costs bandwidth, so the limits are
@@ -176,6 +190,7 @@ impl Behaviour {
             identify,
             ping,
             blocks,
+            channels,
             upnp,
             autonat_client: autonat::v2::client::Behaviour::default(),
             autonat_server: autonat::v2::server::Behaviour::default(),
@@ -197,6 +212,14 @@ pub(crate) fn speaks_relay_hop(protocols: &[StreamProtocol]) -> bool {
 /// Kademlia provider key for a content id.
 pub(crate) fn provider_key(cid: &ContentId) -> kad::RecordKey {
     kad::RecordKey::new(&cid.to_bytes())
+}
+
+/// Kademlia provider key for a creator's channel.
+///
+/// Advertising this says "ask me what this creator has published", which is
+/// a different claim from holding any particular video of theirs.
+pub(crate) fn channel_key(public_key: &[u8]) -> kad::RecordKey {
+    kad::RecordKey::new(&ovn_protocol::channel_provider_key(public_key))
 }
 
 #[cfg(test)]

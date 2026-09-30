@@ -509,7 +509,90 @@ added. See [`../docs/PRIVACY.md`](../docs/PRIVACY.md).
 
 ---
 
-## 14. Conformance
+## 14. Channels
+
+A node share link says how to reach a machine. A **channel link** says whose
+work to keep seeing, which is a different question and outlives any machine.
+
+A channel is identified by an Ed25519 public key — the same key that signs
+that creator's announcements. It is not a name, not an address and not a node.
+
+### 14.1 Channel link
+
+CBOR, base64url (no padding), prefixed `ourvideo://c/`. The `c/` prefix
+distinguishes it from a node share link, whose body is base64url and therefore
+never contains `/`.
+
+```
+ChannelLink = {
+  protocolVersion: uint,
+  publicKey:       bytes,     ; the channel
+  displayName:     tstr,
+  addresses:       [* tstr],  ; hints only
+  createdAt:       uint,
+  signature:       bytes,     ; over the signing bytes below
+}
+```
+
+Signing bytes are a definite-length CBOR array, domain tag first:
+
+```
+["ovn/channel-link/v1", protocolVersion, publicKey, displayName,
+ addresses, createdAt]
+```
+
+A receiver MUST verify the signature before storing anything from the link.
+The name is inside the signature, so whoever passes a link along cannot attach
+a different person's name to a key; so are the addresses, so they cannot point
+a subscriber at a machine of their choosing.
+
+`addresses` are hints and MAY be empty or stale. They carry no `/p2p/`
+component; a dialer derives the peer id from `publicKey`.
+
+### 14.2 Asking what a creator published
+
+Request/response over `/ovn/channel/1.0.0`, CBOR:
+
+```
+ChannelRequest  = { publicKey: bytes, since: uint }
+ChannelResponse = { announcements: [* VideoAnnouncement] }
+```
+
+A responder SHOULD return announcements it holds by that creator with
+`createdAt > since`, newest first, at most {MAX_CHANNEL_ANNOUNCEMENTS} = 64 of them. It MAY
+return fewer, including none. It MUST NOT return announcements by anyone else;
+a requester MUST check anyway.
+
+A requester MUST, for every announcement received:
+
+1. verify the signature, and
+2. check that the creator is the key it asked about.
+
+This is what makes the mechanism work: the answering node is not trusted for
+anything. It chooses what to send and cannot alter or invent any of it, so a
+subscriber may ask **anybody**, and a creator's work stays reachable while the
+creator's own node is switched off.
+
+### 14.3 Finding somebody to ask
+
+Nodes that hold any announcement by a creator SHOULD advertise themselves as
+Kademlia providers for
+
+```
+key = "ovn/channel-link/v1" || 0x3a || publicKey
+```
+
+A subscriber looks up that key to find candidates. It SHOULD also ask the
+hint addresses from the link and the peers it is already connected to.
+
+### 14.4 Subscriptions are local
+
+A subscription is a record on the subscriber's own device. It MUST NOT be
+announced, published, or included in any message. Nothing in this protocol
+tells a creator who subscribes to them, or lets anyone count subscribers, and
+there is no message for doing so. This follows from section 32: who you choose
+to watch is part of what you watch.
+## 15. Conformance
 
 An implementation is conformant when it:
 
