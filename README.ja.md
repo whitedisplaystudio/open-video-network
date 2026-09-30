@@ -397,6 +397,17 @@ BDFL 方式です（[GOVERNANCE.md](GOVERNANCE.md)）。コントリビュート
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) をご覧ください。翻訳が一番はじめやすい
 入口です（[docs/TRANSLATING.md](docs/TRANSLATING.md)）。
 
+### 翻訳の協力をお願いしています
+
+英語と日本語は、それを書く人が目を通しています。**Español・Português・العربية は
+まだです** — 話せない者が英語から書いたものです。全項目が揃ってはいますが、
+揃っていることと自然であることは別です。
+
+この 3 言語のいずれかを読む方へ。`crates/node/src/ui/locales/<code>.json` を開いて
+「この文がおかしい」と教えていただくのが、一番ありがたい貢献です。Rust の知識も
+ビルドも不要で、1 項目だけの Pull Request でまったく構いません。
+[`docs/TRANSLATING.md`](docs/TRANSLATING.md) をご覧ください。
+
 ### ライセンス
 
 コードは [GNU Affero General Public License v3 以降](LICENSE) です。

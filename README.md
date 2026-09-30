@@ -540,6 +540,19 @@ are welcome — start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Translations are the easiest place
 to begin: [`docs/TRANSLATING.md`](docs/TRANSLATING.md).
 
+### Help wanted: the translations
+
+English and 日本語 have been reviewed by people who write them. **Español,
+Português and العربية have not** — they were written from the English by
+someone who does not speak them. They are complete, and that is not the same
+as good.
+
+If you read one of those three: opening
+`crates/node/src/ui/locales/<code>.json` and saying which sentence is wrong is
+the single most useful thing anyone can do here. No Rust, no build, and one key
+is a perfectly good pull request. See
+[`docs/TRANSLATING.md`](docs/TRANSLATING.md).
+
 ### Licence
 
 The code is under the [GNU Affero General Public License v3 or later](LICENSE).
