@@ -252,6 +252,10 @@
     "viewer.channels.checked_one": "新着 {count} 本。",
     "viewer.channels.checked_other": "新着 {count} 本。",
     "viewer.channels.subscribed_none": "{name} を登録しました。今のところ新着はありません。投稿されれば出てきます。",
-    "viewer.channels.checked_none": "新着はありません。"
+    "viewer.channels.checked_none": "新着はありません。",
+    "viewer.channels.clash": "同名あり",
+    "viewer.channels.clash.title": "同じ表示名を使う別の身元をこの端末が知っています。鍵を見比べてください。",
+    "viewer.channels.clash.warning_one": "注意: {name} と名乗る別の身元を、この端末はすでに {count} 件知っています。名前は誰の所有物でもありません — 所有を記録する名前の登録簿が存在しないからです。渡された鍵と一致するか確認してください。",
+    "viewer.channels.clash.warning_other": "注意: {name} と名乗る別の身元を、この端末はすでに {count} 件知っています。名前は誰の所有物でもありません — 所有を記録する名前の登録簿が存在しないからです。渡された鍵と一致するか確認してください。"
   }
 }

@@ -593,6 +593,15 @@ prints; the bookmark works again afterwards.
 
 ---
 
+**A display name is not unique.** Anyone can generate a key and use anyone's
+name; no key theft is needed and nothing can prevent it, because preventing it
+would mean a central register of names. The key is shown beside the name
+everywhere, and subscribing to a name this device already knows under a
+different key warns and marks both. Comparing the key is the only reliable
+check. See [`docs/SECURITY.md`](docs/SECURITY.md).
+
+---
+
 ## Known limits in V1
 
 These are deliberate, and listed in the design document rather than hidden:

@@ -259,6 +259,10 @@
     "viewer.channels.checked_one": "{count} vídeo novo.",
     "viewer.channels.checked_other": "{count} vídeos novos.",
     "viewer.channels.subscribed_none": "Inscrito em {name}. Nada novo por enquanto; o que publicar vai aparecer aqui.",
-    "viewer.channels.checked_none": "Nada novo."
+    "viewer.channels.checked_none": "Nada novo.",
+    "viewer.channels.clash": "nome repetido",
+    "viewer.channels.clash.title": "Outra identidade neste dispositivo usa o mesmo nome. Compare a chave.",
+    "viewer.channels.clash.warning_one": "Atenção: este dispositivo já conhece {count} outra identidade que se chama {name}. Um nome não pertence a ninguém — não existe registro de nomes onde pudesse pertencer. Confira se a chave é a que lhe deram.",
+    "viewer.channels.clash.warning_other": "Atenção: este dispositivo já conhece {count} outras identidades que se chamam {name}. Um nome não pertence a ninguém — não existe registro de nomes onde pudesse pertencer. Confira se a chave é a que lhe deram."
   }
 }

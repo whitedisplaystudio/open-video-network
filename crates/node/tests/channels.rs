@@ -278,3 +278,94 @@ async fn who_you_subscribe_to_is_not_announced() {
     viewer.shutdown().await;
     creator.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_identity_using_the_same_name_is_flagged() {
+    // The impersonation that needs no key theft at all: generate a fresh key
+    // and call yourself what somebody else calls themselves. Nothing can stop
+    // the name being reused — there is no register of names for it to be taken
+    // in — so the only defence is putting the collision in front of the person
+    // at the moment they are deciding whether this is who they think it is.
+    let real = spawn_node("Studio A").await;
+    let impostor = spawn_node("Studio A").await;
+    let viewer = spawn_node("viewer").await;
+
+    let first = viewer
+        .node()
+        .subscribe_channel(&real.node().channel_link().unwrap())
+        .await
+        .expect("subscribing to the real one");
+    assert!(
+        first.name_clashes_with.is_empty(),
+        "the first of a name is not a collision"
+    );
+
+    let second = viewer
+        .node()
+        .subscribe_channel(&impostor.node().channel_link().unwrap())
+        .await
+        .expect("subscribing to the impostor");
+
+    assert_eq!(
+        second.name_clashes_with,
+        vec![real.node().public_key().to_hex()],
+        "the second identity under a known name must be flagged, naming the other key"
+    );
+    // Both are still subscribed: a name is not owned, so this is a warning
+    // rather than a refusal.
+    assert_eq!(viewer.node().subscriptions().unwrap().len(), 2);
+
+    viewer.shutdown().await;
+    impostor.shutdown().await;
+    real.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_same_name_written_differently_still_counts_as_the_same() {
+    // Trailing space and a different case are not a different name to anybody
+    // reading it.
+    let viewer = spawn_node("viewer").await;
+    let identity = ovn_identity::Identity::generate();
+    let other = ovn_identity::Identity::generate();
+
+    let first = ChannelLink::sign("Studio A".into(), vec![], &identity).unwrap();
+    viewer
+        .node()
+        .subscribe_channel(&ovn_discovery::channel_link(&first).unwrap())
+        .await
+        .expect("subscribe");
+
+    let second = ChannelLink::sign("  studio   a  ".into(), vec![], &other).unwrap();
+    let report = viewer
+        .node()
+        .subscribe_channel(&ovn_discovery::channel_link(&second).unwrap())
+        .await
+        .expect("subscribe");
+
+    assert_eq!(
+        report.name_clashes_with,
+        vec![identity.public_key().to_hex()],
+        "case and spacing must not be a way around the warning"
+    );
+
+    viewer.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_channel_with_no_name_does_not_collide_with_every_other_one() {
+    let viewer = spawn_node("viewer").await;
+    for _ in 0..2 {
+        let identity = ovn_identity::Identity::generate();
+        let link = ChannelLink::sign(String::new(), vec![], &identity).unwrap();
+        let report = viewer
+            .node()
+            .subscribe_channel(&ovn_discovery::channel_link(&link).unwrap())
+            .await
+            .expect("subscribe");
+        assert!(
+            report.name_clashes_with.is_empty(),
+            "an empty name is not a name being shared"
+        );
+    }
+    viewer.shutdown().await;
+}

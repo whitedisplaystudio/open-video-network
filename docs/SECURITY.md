@@ -175,3 +175,49 @@ Stated plainly because the alternative is someone discovering them later:
 The dependency tree is deliberately small and the versions are pinned in
 `Cargo.lock`. Run `cargo audit` before a release. A new dependency in a pull
 request should come with a sentence about why it is worth the added surface.
+
+## Impersonation
+
+What is cryptographically impossible here, and tested:
+
+* publishing under somebody else's identity — every announcement is signed,
+  and an unsigned or wrongly signed one is discarded rather than stored or
+  relayed;
+* altering an announcement in flight;
+* attaching your own name to somebody else's key in a channel link, because the
+  display name is inside the signature;
+* claiming another identity in a node descriptor, because the peer id must be
+  derivable from the public key.
+
+What remains possible, and cannot be removed:
+
+**Anyone may use anyone's display name.** Generate a fresh key, set the name to
+somebody else's, and to a reader the two are the same. No key theft is
+involved. This cannot be prevented, because preventing it means a register of
+names that decides who may use which, and that register would be the central
+authority Principle 1 exists to do without. A name is human-meaningful and the
+system is decentralised; the third property, that a name identifies exactly
+one party, is the one that cannot also hold.
+
+What the software does instead:
+
+* **The key is shown wherever the name is.** A short fingerprint beside the
+  display name, and the full key on the channel page. The key is what a
+  subscription is to; the name is a label on it.
+* **A collision is reported when it happens.** Subscribing to a name this
+  device already knows under a different key warns, names the other key, and
+  marks both rows in the channel list from then on. Matching is
+  case-insensitive with whitespace collapsed.
+* Subscribing is not refused. A name is not owned, so a collision is a thing
+  to be told about, not an error.
+
+The honest limits of that:
+
+* It catches an **identical** name. It does not catch one that merely looks
+  similar — a Cyrillic `а`, a full-width character, `Studio А` with a
+  different letter. Comparing the key is the only reliable check.
+* It only knows about identities **this device** has seen. A first encounter
+  with an impostor, having never seen the real one, looks like nothing unusual.
+* A **stolen identity key** is indistinguishable from its owner, and there is
+  no revocation: revoking means telling an authority, and there isn't one.
+  Back up `identity.key` and keep it as private as an SSH key.

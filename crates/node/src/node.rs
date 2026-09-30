@@ -186,6 +186,13 @@ pub struct SubscribeReport {
     pub display_name: String,
     /// How many of that creator's videos this device had not seen before.
     pub new_videos: usize,
+    /// Other identities this device already knows under the same name.
+    ///
+    /// Not an error and not a reason to refuse: a name is not owned by
+    /// anybody, because there is no register of names to own it in. It is a
+    /// thing the person needs to see, at the one moment they are deciding
+    /// whether this is who they think it is.
+    pub name_clashes_with: Vec<String>,
 }
 
 /// What a fetch did.
@@ -485,11 +492,27 @@ impl Node {
             let _ = self.inner.network.dial(addr).await;
         }
 
+        // Asked before the refresh, so a profile arriving with it cannot be
+        // the thing that "clashes".
+        let name_clashes_with = self
+            .inner
+            .db
+            .others_using_name(&link.display_name, &hex)
+            .unwrap_or_default();
+        if !name_clashes_with.is_empty() {
+            tracing::warn!(
+                name = %link.display_name,
+                others = name_clashes_with.len(),
+                "subscribed to a name this device already knows under another key"
+            );
+        }
+
         let found = self.refresh_channel(&creator).await.unwrap_or(0);
         Ok(SubscribeReport {
             public_key: hex,
             display_name: link.display_name,
             new_videos: found,
+            name_clashes_with,
         })
     }
 

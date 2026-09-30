@@ -277,6 +277,10 @@
     "viewer.channels.checked_one": "{count} new video.",
     "viewer.channels.checked_other": "{count} new videos.",
     "viewer.channels.subscribed_none": "Subscribed to {name}. Nothing new yet — anything they publish will turn up.",
-    "viewer.channels.checked_none": "Nothing new."
+    "viewer.channels.checked_none": "Nothing new.",
+    "viewer.channels.clash": "name shared",
+    "viewer.channels.clash.title": "Another identity on this device uses the same display name. Compare the key.",
+    "viewer.channels.clash.warning_one": "Careful: this device already knows {count} other identity calling itself {name}. A name is not owned by anyone — there is no register of names for it to be owned in. Check the key against the one you were given.",
+    "viewer.channels.clash.warning_other": "Careful: this device already knows {count} other identities calling themselves {name}. A name is not owned by anyone — there is no register of names for it to be owned in. Check the key against the one you were given."
   }
 }

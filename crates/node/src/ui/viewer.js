@@ -359,7 +359,18 @@ async function loadChannels() {
     rows.map((row) =>
       el('button', { class: 'channel-row', type: 'button', 'data-key': row.publicKey }, [
         el('span', { class: 'channel-name' }, [row.displayName || t('viewer.channels.unnamed')]),
+        // The key beside the name, always. The name is what a reader
+        // recognises; the key is what the subscription is to.
         el('span', { class: 'channel-key mono' }, [shortId(row.publicKey)]),
+        ...((row.nameClashes || []).length
+          ? [
+              el(
+                'span',
+                { class: 'badge warn', title: t('viewer.channels.clash.title') },
+                [t('viewer.channels.clash')]
+              ),
+            ]
+          : []),
         el('span', { class: 'channel-count' }, [
           t('viewer.channels.videos', { count: row.videos }),
         ]),
@@ -378,6 +389,17 @@ async function openChannel(key) {
   $('channel-name').textContent =
     channel?.displayName || t('viewer.channels.unnamed');
   $('channel-key').textContent = key;
+  const clash = $('channel-clash');
+  if (clash) {
+    const others = (channel?.nameClashes || []).length;
+    clash.hidden = others === 0;
+    if (others) {
+      clash.textContent = t('viewer.channels.clash.warning', {
+        name: channel?.displayName || t('viewer.channels.unnamed'),
+        count: others,
+      });
+    }
+  }
   $('channel-unsubscribe').onclick = async () => {
     await del(`/v1/subscriptions/${key}`);
     toast(t('viewer.channel.unsubscribed'));
@@ -406,6 +428,17 @@ function wireChannels() {
           ? t('viewer.channels.subscribed_none', { name })
           : t('viewer.channels.subscribed', { name, count: report.newVideos })
       );
+      if ((report.nameClashesWith || []).length) {
+        // Said separately and said as a warning: this is the one moment the
+        // person is deciding whether this is who they think it is.
+        toast(
+          t('viewer.channels.clash.warning', {
+            name,
+            count: report.nameClashesWith.length,
+          }),
+          'warn'
+        );
+      }
       await loadVideos();
       await loadChannels();
     } catch (error) {

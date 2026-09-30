@@ -449,6 +449,42 @@ impl Database {
         Ok(())
     }
 
+    /// Other identities already known under this display name.
+    ///
+    /// The one impersonation that needs no key theft: generate a fresh key,
+    /// call yourself what somebody else calls themselves, and to a reader the
+    /// two are the same. Nothing can stop the name being reused — without a
+    /// central register of names there is no such thing as a taken name — but
+    /// the collision can be put in front of the person at the moment it
+    /// matters.
+    ///
+    /// Matching is case-insensitive with runs of whitespace collapsed. It
+    /// catches an identical name, which is the cheap attack. It does not catch
+    /// a name that merely looks similar.
+    pub fn others_using_name(&self, display_name: &str, except: &str) -> Result<Vec<String>> {
+        let wanted = fold_name(display_name);
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT public_key, display_name FROM creators
+             UNION
+             SELECT public_key, display_name FROM following",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut clashing = Vec::new();
+        for row in rows {
+            let (key, name) = row?;
+            if key != except && fold_name(&name) == wanted && !clashing.contains(&key) {
+                clashing.push(key);
+            }
+        }
+        Ok(clashing)
+    }
+
     pub fn following(&self) -> Result<Vec<String>> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare("SELECT public_key FROM following ORDER BY since DESC")?;
@@ -493,6 +529,14 @@ fn row_to_subscription(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subscription
         since: row.get("since")?,
         last_checked: row.get("last_checked")?,
     })
+}
+
+/// A display name reduced to what a reader would treat as the same name.
+fn fold_name(name: &str) -> String {
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// Turn free user text into a safe FTS5 MATCH expression.

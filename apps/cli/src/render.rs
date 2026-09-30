@@ -402,18 +402,47 @@ pub fn channel_link(value: &Value) {
 
 pub fn subscribed(value: &Value) {
     let name = str_field(value, "displayName");
+    let key = str_field(value, "publicKey");
     let found = value.get("newVideos").and_then(|v| v.as_u64()).unwrap_or(0);
     println!();
+    // The key goes beside the name every time. The name is what a reader
+    // recognises; the key is what the subscription is actually to.
     if name.is_empty() {
-        println!("Subscribed.");
+        println!("Subscribed to {}.", short_cid(key));
     } else {
-        println!("Subscribed to {name}.");
+        println!("Subscribed to {name} ({}).", short_cid(key));
     }
     match found {
         0 => println!("Nothing new right now. Anything they publish will turn up."),
         1 => println!("Found 1 video you had not seen."),
         n => println!("Found {n} videos you had not seen."),
     }
+
+    let clashes = value
+        .get("nameClashesWith")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if clashes.is_empty() {
+        return;
+    }
+    println!();
+    println!(
+        "  !  This device already knows {} other identit{} calling {} \"{name}\":",
+        clashes.len(),
+        if clashes.len() == 1 { "y" } else { "ies" },
+        if clashes.len() == 1 {
+            "itself"
+        } else {
+            "themselves"
+        },
+    );
+    for other in &clashes {
+        println!("       {}", short_cid(other.as_str().unwrap_or_default()));
+    }
+    println!();
+    println!("     A name is not owned by anyone: there is no register of names for");
+    println!("     it to be owned in. Check the key above is the one you were given.");
 }
 
 pub fn subscriptions(value: &Value) {
@@ -426,18 +455,37 @@ pub fn subscriptions(value: &Value) {
         return;
     }
     println!("{}  {}  VIDEOS HERE", pad("CHANNEL", 24), pad("KEY", 22));
+    let mut clashing = 0usize;
     for row in &rows {
         let name = str_field(row, "displayName");
         let name = if name.is_empty() { "(unnamed)" } else { name };
+        let clashes = row
+            .get("nameClashes")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false);
+        if clashes {
+            clashing += 1;
+        }
         println!(
-            "{}  {}  {}",
+            "{}  {}  {}{}",
             pad(name, 24),
             pad(&short_cid(str_field(row, "publicKey")), 22),
-            row.get("videos").and_then(|v| v.as_u64()).unwrap_or(0)
+            row.get("videos").and_then(|v| v.as_u64()).unwrap_or(0),
+            if clashes {
+                "   ! name shared with another key"
+            } else {
+                ""
+            }
         );
     }
     println!();
     println!("{} channels", rows.len());
+    if clashing > 0 {
+        println!();
+        println!("Marked rows share a display name with another identity this device");
+        println!("knows. Compare the key against the one you were actually given.");
+    }
 }
 
 pub fn refreshed(value: &Value) {

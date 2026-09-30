@@ -303,6 +303,14 @@
     "viewer.channels.checked_many": "{count} مقطعًا جديدًا.",
     "viewer.channels.checked_other": "{count} مقطع جديد.",
     "viewer.channels.subscribed_none": "تم الاشتراك في {name}. لا جديد بعد؛ سيظهر ما ينشره هنا.",
-    "viewer.channels.checked_none": "لا جديد."
+    "viewer.channels.checked_none": "لا جديد.",
+    "viewer.channels.clash": "اسم مشترك",
+    "viewer.channels.clash.title": "هوية أخرى على هذا الجهاز تستخدم الاسم نفسه. قارن المفتاح.",
+    "viewer.channels.clash.warning_zero": "تنبيه: يعرف هذا الجهاز {count} هوية أخرى تسمّي نفسها {name}. الاسم ليس مُلكًا لأحد — لا يوجد سجل أسماء يُملك فيه. تأكّد أن المفتاح هو الذي أُعطي لك.",
+    "viewer.channels.clash.warning_one": "تنبيه: يعرف هذا الجهاز {count} هوية أخرى تسمّي نفسها {name}. الاسم ليس مُلكًا لأحد — لا يوجد سجل أسماء يُملك فيه. تأكّد أن المفتاح هو الذي أُعطي لك.",
+    "viewer.channels.clash.warning_two": "تنبيه: يعرف هذا الجهاز {count} هويتين أخريين تسمّيان نفسهما {name}. الاسم ليس مُلكًا لأحد — لا يوجد سجل أسماء يُملك فيه. تأكّد أن المفتاح هو الذي أُعطي لك.",
+    "viewer.channels.clash.warning_few": "تنبيه: يعرف هذا الجهاز {count} هويات أخرى تسمّي نفسها {name}. الاسم ليس مُلكًا لأحد — لا يوجد سجل أسماء يُملك فيه. تأكّد أن المفتاح هو الذي أُعطي لك.",
+    "viewer.channels.clash.warning_many": "تنبيه: يعرف هذا الجهاز {count} هوية أخرى تسمّي نفسها {name}. الاسم ليس مُلكًا لأحد — لا يوجد سجل أسماء يُملك فيه. تأكّد أن المفتاح هو الذي أُعطي لك.",
+    "viewer.channels.clash.warning_other": "تنبيه: يعرف هذا الجهاز {count} هوية أخرى تسمّي نفسها {name}. الاسم ليس مُلكًا لأحد — لا يوجد سجل أسماء يُملك فيه. تأكّد أن المفتاح هو الذي أُعطي لك."
   }
 }

@@ -528,6 +528,18 @@ ul.plain { list-style: none; margin: 0; padding: 0; }
 .channel-count { color: var(--text-dim); font-size: 12.5px; }
 
 .empty { color: var(--text-dim); padding: 16px 0; }
+
+/* A name collision is the one impersonation that needs no key theft, so it
+   is stated rather than hinted at. */
+.warning {
+  padding: 12px 14px;
+  margin-bottom: var(--gap);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+  color: var(--text);
+  font-size: 13px;
+}
 .hint { color: var(--text-dim); font-size: 12.5px; margin: 8px 0 0; }
 
 /* Where this build came from. The AGPL requires a user who reaches the node

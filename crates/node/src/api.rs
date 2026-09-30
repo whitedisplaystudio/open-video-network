@@ -486,6 +486,7 @@ async fn subscribe_channel(
         "publicKey": report.public_key,
         "displayName": report.display_name,
         "newVideos": report.new_videos,
+        "nameClashesWith": report.name_clashes_with,
     })))
 }
 
@@ -506,12 +507,19 @@ async fn list_subscriptions(State(node): State<Node>) -> ApiResult<Json<serde_js
                 .and_then(|key| node.channel_videos(&key).ok())
                 .map(|v| v.len())
                 .unwrap_or(0);
+            // A collision does not go away, so the row carries it rather
+            // than only the toast at subscribe time.
+            let clashes = node
+                .database()
+                .others_using_name(&s.display_name, &s.public_key)
+                .unwrap_or_default();
             serde_json::json!({
                 "publicKey": s.public_key,
                 "displayName": s.display_name,
                 "since": s.since,
                 "lastChecked": s.last_checked,
                 "videos": videos,
+                "nameClashes": clashes,
             })
         })
         .collect();
