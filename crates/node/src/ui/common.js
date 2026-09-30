@@ -514,7 +514,15 @@ export function router(onChange) {
       location.hash = `#/${button.dataset.page}`;
     });
   }
-  window.addEventListener('hashchange', show);
+  window.addEventListener('hashchange', () => {
+    show();
+    // The page changed under a keyboard user who cannot see that it did.
+    // Moving focus into the new page puts them at its top, where a sighted
+    // user already is. Only on navigation: doing it on first load would steal
+    // focus from whatever the browser restored.
+    const main = document.getElementById('main');
+    if (main) main.focus({ preventScroll: true });
+  });
   show();
   return show;
 }

@@ -656,3 +656,246 @@ fn placeholders_are_substituted_by_kind() {
     );
     assert_eq!(substitute("/v1/status", "CID", "KEY"), "/v1/status");
 }
+
+// ------------------------------------------------------------ accessibility
+
+/// Custom properties declared in a `:root`-like block, so the palette can be
+/// checked rather than eyeballed.
+///
+/// The stylesheet declares the light theme on `:root` and overrides it inside
+/// a `prefers-color-scheme: dark` block; both have to stand on their own.
+fn palette(css: &str, dark: bool) -> BTreeMap<String, String> {
+    let region = if dark {
+        let at = css
+            .find("@media (prefers-color-scheme: dark)")
+            .expect("a dark theme block");
+        &css[at..]
+    } else {
+        let end = css
+            .find("@media (prefers-color-scheme: dark)")
+            .unwrap_or(css.len());
+        &css[..end]
+    };
+    let mut found = BTreeMap::new();
+    for line in region.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("--") else {
+            continue;
+        };
+        let Some((name, value)) = rest.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().trim_end_matches(';').trim();
+        if value.starts_with('#') && (value.len() == 7 || value.len() == 4) {
+            found.insert(name.trim().to_string(), value.to_string());
+        }
+    }
+    found
+}
+
+/// WCAG relative luminance of an `#rrggbb` colour.
+fn luminance(hex: &str) -> f64 {
+    let channel = |c: u8| {
+        let c = c as f64 / 255.0;
+        if c <= 0.039_28 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let bytes = hex.trim_start_matches('#');
+    let part = |i: usize| u8::from_str_radix(&bytes[i..i + 2], 16).expect("two hex digits");
+    0.2126 * channel(part(0)) + 0.7152 * channel(part(2)) + 0.0722 * channel(part(4))
+}
+
+/// WCAG contrast ratio between two colours, 1.0 to 21.0.
+fn contrast(a: &str, b: &str) -> f64 {
+    let (la, lb) = (luminance(a), luminance(b));
+    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+#[test]
+fn the_palette_is_readable_in_both_themes() {
+    // Contrast is the one accessibility property that can be checked exactly,
+    // so there is no excuse for deciding it by eye. Text needs 4.5:1 (WCAG
+    // 1.4.3 AA) against every surface it is placed on; the border of anything
+    // you can operate needs 3:1 (1.4.11).
+    let css = read("app.css");
+    let text_colours = [
+        "text",
+        "text-dim",
+        "text-faint",
+        "accent",
+        "danger",
+        "ok",
+        "warn",
+    ];
+    let surfaces = ["bg", "surface", "surface-2"];
+
+    for dark in [false, true] {
+        let theme = if dark { "dark" } else { "light" };
+        let colours = palette(&css, dark);
+        for name in text_colours {
+            let fg = colours
+                .get(name)
+                .unwrap_or_else(|| panic!("the {theme} theme declares no --{name}"));
+            for surface in surfaces {
+                let bg = colours
+                    .get(surface)
+                    .unwrap_or_else(|| panic!("the {theme} theme declares no --{surface}"));
+                let ratio = contrast(fg, bg);
+                assert!(
+                    ratio >= 4.5,
+                    "{theme}: --{name} ({fg}) on --{surface} ({bg}) is {ratio:.2}:1, \
+                     under the 4.5:1 that text needs"
+                );
+            }
+        }
+        let border = colours
+            .get("border-strong")
+            .unwrap_or_else(|| panic!("the {theme} theme declares no --border-strong"));
+        for surface in surfaces {
+            let bg = &colours[surface];
+            let ratio = contrast(border, bg);
+            assert!(
+                ratio >= 3.0,
+                "{theme}: --border-strong ({border}) on --{surface} ({bg}) is {ratio:.2}:1, \
+                 under the 3:1 that the edge of a control needs"
+            );
+        }
+        // And the label on the accent button against the accent itself.
+        let ratio = contrast(&colours["accent-text"], &colours["accent"]);
+        assert!(
+            ratio >= 4.5,
+            "{theme}: --accent-text on --accent is {ratio:.2}:1"
+        );
+    }
+}
+
+#[test]
+fn a_keyboard_can_get_past_the_header() {
+    // Both pages put a dozen controls in the header. Without a skip link,
+    // reaching the content means tabbing through all of them on every page.
+    for page in ["viewer.html", "admin.html"] {
+        let html = read(page);
+        assert!(
+            html.contains("class=\"skip-link\"") && html.contains("href=\"#main\""),
+            "{page} has no skip link"
+        );
+        assert!(
+            html.contains("<main id=\"main\" tabindex=\"-1\">"),
+            "{page} has no focusable main landmark for a skip link to reach"
+        );
+        // The link must come before the header, or it is not first in the tab
+        // order and does not help.
+        let skip = html.find("skip-link").expect("a skip link");
+        let header = html.find("<header").expect("a header");
+        assert!(
+            skip < header,
+            "{page} puts its skip link after the header it exists to skip"
+        );
+    }
+}
+
+#[test]
+fn everything_that_changes_by_itself_announces_that_it_changed() {
+    // Progress, errors and the connection state all change without anybody
+    // touching the page. Unannounced, they are invisible to a screen reader.
+    for page in ["viewer.html", "admin.html"] {
+        let html = read(page);
+        for (id, what) in [
+            ("toasts", "progress and errors"),
+            ("connection", "the connection state"),
+        ] {
+            let at = html
+                .find(&format!("id=\"{id}\""))
+                .unwrap_or_else(|| panic!("{page} has no #{id}"));
+            // Look at the element's own tag, not the rest of the document.
+            let tag_end = html[at..].find('>').expect("a closing angle bracket") + at;
+            let tag = &html[at..tag_end];
+            assert!(
+                tag.contains("aria-live"),
+                "{page}: #{id} carries {what} but is not a live region: {tag}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_landmark_that_appears_twice_has_a_name() {
+    // A screen reader lists the landmarks. Two pages each with a <nav> and no
+    // name gives the reader two entries called "navigation".
+    for page in ["viewer.html", "admin.html"] {
+        let html = read(page);
+        let at = html
+            .find("<nav")
+            .unwrap_or_else(|| panic!("{page} has no nav"));
+        let tag_end = html[at..].find('>').expect("a closing angle bracket") + at;
+        let tag = &html[at..tag_end];
+        assert!(
+            tag.contains("data-i18n-label") || tag.contains("aria-label"),
+            "{page}: the nav has no accessible name: {tag}"
+        );
+    }
+    // The player is a control with no visible label of its own.
+    let viewer = read("viewer.html");
+    let at = viewer.find("<video").expect("a video element");
+    let tag_end = viewer[at..].find('>').expect("a closing angle bracket") + at;
+    assert!(
+        viewer[at..tag_end].contains("data-i18n-label"),
+        "the player has no accessible name"
+    );
+}
+
+#[test]
+fn focus_is_always_visible_somewhere() {
+    let css = read("app.css");
+    assert!(
+        css.contains(":focus-visible {\n  outline: 2px solid var(--accent);"),
+        "there is no shared focus ring for operable elements"
+    );
+    // The search input suppresses its own outline, so the ring has to be on
+    // the wrapper the viewer actually sees.
+    let at = css
+        .find(".searchbar:focus-within {")
+        .expect("a focus style for the search bar");
+    let block_end = css[at..].find('}').expect("a closing brace") + at;
+    assert!(
+        css[at..block_end].contains("outline:"),
+        "the search bar hides the input's outline and puts nothing in its place"
+    );
+}
+
+#[test]
+fn motion_can_be_turned_down() {
+    let css = read("app.css");
+    assert!(
+        css.contains("@media (prefers-reduced-motion: reduce)"),
+        "the stylesheet animates and transitions but never asks whether that is wanted"
+    );
+}
+
+#[test]
+fn the_accessibility_strings_are_translated_everywhere() {
+    // A skip link that says "Skip to content" in the middle of an Arabic
+    // interface is worse than none.
+    let keys = [
+        "a11y.skipToContent",
+        "a11y.player",
+        "nav.viewer.label",
+        "nav.admin.label",
+    ];
+    for code in ["en", "ja", "es", "pt", "ar"] {
+        let pack: serde_json::Value =
+            serde_json::from_str(&read(&format!("locales/{code}.json"))).expect("valid JSON");
+        let strings = pack["strings"].as_object().expect("a strings object");
+        for key in keys {
+            let value = strings
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("{code}.json is missing {key}"));
+            assert!(!value.trim().is_empty(), "{code}.json has {key} empty");
+        }
+    }
+}

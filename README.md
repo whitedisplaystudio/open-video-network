@@ -341,6 +341,16 @@ erases it.
 Both pages show live progress from the event stream: peers arriving,
 announcements landing, and a progress bar per download.
 
+**Both work from the keyboard and with a screen reader.** A skip link comes
+first in the tab order, so reaching the content does not mean tabbing through a
+dozen header controls; changing page moves focus into it. Everything operable
+has a visible focus ring. Progress, errors and the connection state are live
+regions, so they are announced rather than only drawn in a corner. Every
+colour pair in the palette is checked by a test against WCAG AA — 4.5:1 for
+text on each surface it appears on, 3:1 for the edge of anything you can
+operate — in both the light and dark themes. Animation is dropped entirely for
+anyone whose system asks for less motion.
+
 The pages are served under a strict `Content-Security-Policy` that allows
 nothing from anywhere but this node, and the node refuses any request whose
 `Host` is not a loopback name, which closes DNS rebinding.

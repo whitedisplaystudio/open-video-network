@@ -55,13 +55,43 @@ nothing to send it with.
 
 Both directions are asserted by tests that read the manifests.
 
-### 3. Nothing appears on the wire
+### 3. Nothing appears in what a peer stores
 
 An acceptance test runs two real nodes, has one watch, like and skip its way
 through several videos, waits, and then checks every field the other node
 stores. The check is an **allowlist** of field names, not a search for
 suspicious words — so anything new that starts appearing in what a peer holds
 has to be added to that list by a person, deliberately.
+
+### 4. Nothing appears on the wire
+
+The three checks above all read the source in one way or another. This one does
+not.
+
+A bare `ovn-network` peer joins the network — a real libp2p node speaking this
+protocol, with no database, no content layer and no recommendation engine, so
+it cannot do any deriving itself. It keeps every byte it is sent. A second node
+publishes three videos that differ only in their identity, and a third watches
+exactly one of them, twelve times, forms preferences from it, builds a feed and
+asks for an explanation.
+
+The recording is then asked what it can tell:
+
+* **No blocks were requested.** The viewer fetched nothing, so it should have
+  asked for nothing.
+* **The duration it watched for does not appear**, in decimal, in CBOR, or as
+  a big- or little-endian integer of either width. A leak cannot hide behind a
+  choice of encoding.
+* **The watched video is indistinguishable from the two that were not.** The
+  viewer forwards gossip, so all three announcements pass through it; what must
+  not happen is the one it watched standing out. The test waits until all three
+  are on the tape before comparing, so it cannot pass by hearing nothing.
+* **Every payload decodes as a message this protocol defines** — an
+  announcement or a profile update. A side channel would show up here as bytes
+  that do not decode.
+
+Finally the viewer publishes a video of its own, and the recording has to pick
+it up. A test that hears nothing proves nothing unless it can hear something.
 
 ## The one place conversion happens
 

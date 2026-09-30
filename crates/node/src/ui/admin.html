@@ -9,11 +9,13 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main" data-i18n="a11y.skipToContent">Skip to content</a>
+
 <header class="topbar">
   <a class="brand" href="#/overview"><span class="brand-mark" aria-hidden="true">◆</span>
     <span data-i18n="brand.admin">ourvideo node</span></a>
 
-  <nav class="nav">
+  <nav class="nav" data-i18n-label="nav.admin.label">
     <button type="button" data-page="overview" data-i18n="nav.overview">Overview</button>
     <button type="button" data-page="peers" data-i18n="nav.peers">Peers</button>
     <button type="button" data-page="content" data-i18n="nav.content">Content</button>
@@ -26,11 +28,11 @@
   <label class="sr-only" for="language" data-i18n="language.label">Language</label>
   <select id="language" class="lang-select"></select>
 
-  <span class="badge" id="connection" data-i18n-title="conn.title"><span class="dot" aria-hidden="true"></span><span id="connection-text">…</span></span>
+  <span class="badge" id="connection" data-i18n-title="conn.title" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="connection-text">…</span></span>
   <a class="badge" href="/ui" data-i18n="nav.toViewer">Watch</a>
 </header>
 
-<main>
+<main id="main" tabindex="-1">
   <!-- Overview -->
   <section class="page" data-page="overview">
     <div class="page-head"><h1 data-i18n="admin.overview.title">Overview</h1></div>
@@ -205,7 +207,7 @@
   </section>
 </main>
 
-<div id="toasts"></div>
+<div id="toasts" role="status" aria-live="polite"></div>
 <script type="module" src="/assets/admin.js"></script>
 </body>
 </html>

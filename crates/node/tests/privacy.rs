@@ -10,6 +10,8 @@
 //!    those types even if they wanted to.
 //! 3. **Behavioural** — with two real nodes connected, one watches a lot and
 //!    the other learns nothing.
+//! 4. **On the wire** — a bare libp2p peer records every byte it is sent and
+//!    cannot work out which of three videos was watched.
 
 mod support;
 
@@ -367,4 +369,255 @@ async fn erasing_local_history_actually_erases_it() {
     assert!(node.node().video(&cid).unwrap().is_some());
 
     node.shutdown().await;
+}
+
+// ------------------------------------------------------- Test G, on the wire
+
+/// Everything one peer heard, kept as the bytes it arrived as.
+///
+/// The observer is a bare `ovn-network` peer rather than a full node: it has
+/// no content layer, no database and no recommendation engine, so it cannot
+/// accidentally do any of the deriving itself. It is exactly a peer on the
+/// network with a tape recorder.
+#[derive(Default)]
+struct Heard {
+    /// Raw payloads from either gossip topic, whoever forwarded them.
+    payloads: Vec<Vec<u8>>,
+    /// Blocks that were asked for, and by whom.
+    block_requests: Vec<(ovn_network::PeerId, ContentId)>,
+}
+
+impl Heard {
+    /// How many recorded payloads contain `needle` anywhere in them.
+    fn payloads_containing(&self, needle: &[u8]) -> usize {
+        self.payloads.iter().filter(|p| contains(p, needle)).count()
+    }
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.len() <= haystack.len()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+/// Every plausible on-the-wire spelling of an integer, so that a leak cannot
+/// hide behind a choice of encoding.
+fn encodings_of(value: u64) -> Vec<Vec<u8>> {
+    let mut forms = vec![
+        value.to_string().into_bytes(),
+        value.to_be_bytes().to_vec(),
+        value.to_le_bytes().to_vec(),
+        (value as u32).to_be_bytes().to_vec(),
+        (value as u32).to_le_bytes().to_vec(),
+    ];
+    // CBOR, which is what this protocol actually speaks.
+    if let Ok(cbor) = ovn_protocol::to_cbor_vec(&value) {
+        forms.push(cbor);
+    }
+    forms.retain(|f| f.len() >= 3); // A one- or two-byte needle matches noise.
+    forms
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_recording_the_wire_cannot_tell_what_was_watched() {
+    // The three other ways this file checks Test G are structural: the types
+    // cannot be serialised, and the crates that reach the network cannot name
+    // them. This one makes no appeal to the source at all. It puts a peer on
+    // the network, keeps every byte it is sent, and asks what can be worked
+    // out from the recording.
+    let library = spawn_node("library").await;
+    let viewer = spawn_node("viewer").await;
+
+    // The observer: a real libp2p peer speaking this protocol, and nothing else.
+    let observer_identity = ovn_identity::Identity::generate();
+    let mut observer_config = ovn_network::NetworkConfig {
+        listen_addrs: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+        enable_mdns: false,
+        ..Default::default()
+    };
+    observer_config.bootstrap_addrs.clear();
+    let (observer, mut observer_events, observer_task) =
+        ovn_network::spawn(&observer_identity, observer_config).expect("the observer starts");
+    let observer_addr = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(ovn_network::NetworkEvent::Listening(addr)) = observer_events.recv().await {
+                return addr;
+            }
+        }
+    })
+    .await
+    .expect("the observer reports an address")
+    .with(libp2p::multiaddr::Protocol::P2p(observer.local_peer_id()));
+
+    // Wire all three together, so the viewer's only two peers are the library
+    // and the recorder.
+    join_via_share_link(&viewer, &library).await;
+    viewer
+        .node()
+        .add_peer(&observer_addr.to_string())
+        .await
+        .expect("the viewer connects to the observer");
+
+    // Start recording before anything is published. The tape has to hold the
+    // library's three announcements, or the comparison at the end has nothing
+    // to compare and would pass by hearing nothing at all.
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(Heard::default()));
+    let recorder = {
+        let heard = std::sync::Arc::clone(&heard);
+        tokio::spawn(async move {
+            while let Some(event) = observer_events.recv().await {
+                let mut heard = heard.lock().expect("the recorder lock");
+                match event {
+                    ovn_network::NetworkEvent::GossipAnnouncement { data, .. }
+                    | ovn_network::NetworkEvent::GossipProfile { data, .. } => {
+                        heard.payloads.push(data)
+                    }
+                    ovn_network::NetworkEvent::BlockRequested { peer, cid, .. } => {
+                        heard.block_requests.push((peer, cid))
+                    }
+                    _ => {}
+                }
+            }
+        })
+    };
+
+    // Three videos, identical except for their identity. The question the test
+    // asks is which of them the viewer watched.
+    let mut cids = Vec::new();
+    for (index, tag) in ["first", "second", "third"].iter().enumerate() {
+        let file = write_seeded_file(
+            library.dir.path(),
+            &format!("clip-{index}.bin"),
+            120_000,
+            index as u64 + 1,
+        );
+        cids.push(publish_until_announced(library.node(), &file, tag, &[tag]).await);
+    }
+
+    for cid in &cids {
+        wait_until(PROPAGATION_TIMEOUT, || {
+            viewer.node().video(cid).ok().flatten().is_some()
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the viewer should have discovered {cid}"));
+    }
+
+    // And the observer has to have heard all three of them pass by.
+    wait_until(PROPAGATION_TIMEOUT, || {
+        let heard = heard.lock().unwrap();
+        cids.iter()
+            .all(|cid| heard.payloads_containing(cid.to_string().as_bytes()) > 0)
+    })
+    .await
+    .expect("the observer should hear every announcement the library makes");
+
+    // The viewer watches exactly one of the three, hard, with a duration
+    // distinctive enough to recognise in a byte stream.
+    const WATCHED_SECS: u32 = 41_233;
+    let watched = cids[1];
+    for _ in 0..12 {
+        viewer
+            .node()
+            .record_watch(&WatchEvent {
+                cid: watched,
+                watched_secs: WATCHED_SECS,
+                duration_secs: WATCHED_SECS,
+                completed: true,
+                skipped: false,
+                liked: true,
+            })
+            .expect("recording a watch");
+    }
+    // And does everything that derives from it.
+    let model = viewer.node().preference_model().expect("a model");
+    assert!(
+        !model.is_empty(),
+        "the test needs the viewer to have actually formed preferences"
+    );
+    let feed = viewer.node().recommendations(10).expect("a feed");
+    assert!(!feed.is_empty(), "the test needs a feed to have been built");
+    viewer.node().explain(&watched).expect("an explanation");
+
+    // Give anything that was going to be sent time to be sent.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    {
+        let heard = heard.lock().unwrap();
+
+        // Nothing was fetched, so nothing should have been asked for.
+        assert!(
+            heard.block_requests.is_empty(),
+            "the observer was asked for blocks it should never have been asked for: {:?}",
+            heard.block_requests
+        );
+
+        // The duration must not appear, in any spelling.
+        for form in encodings_of(WATCHED_SECS as u64) {
+            assert_eq!(
+                heard.payloads_containing(&form),
+                0,
+                "how long the viewer watched appeared on the wire, encoded as {form:02x?}"
+            );
+        }
+
+        // The sharpest form of the promise: the watched video is not
+        // distinguishable from the two that were not. The viewer forwards
+        // gossip, so all three announcements may pass through it — what must
+        // not happen is the watched one standing out.
+        let counts: Vec<usize> = cids
+            .iter()
+            .map(|cid| heard.payloads_containing(cid.to_string().as_bytes()))
+            .collect();
+        assert!(
+            counts.iter().all(|&c| c > 0),
+            "the recording has to contain all three videos for this comparison to \
+             mean anything; it held {counts:?}"
+        );
+        assert_eq!(
+            counts[1], counts[0],
+            "the watched video appeared {} times against {} for one nobody watched; \
+             an observer could tell them apart",
+            counts[1], counts[0]
+        );
+        assert_eq!(
+            counts[1], counts[2],
+            "the watched video appeared {} times against {} for one nobody watched; \
+             an observer could tell them apart",
+            counts[1], counts[2]
+        );
+
+        // Nothing the observer heard is anything other than a public message
+        // this protocol defines. A side channel would show up here as a
+        // payload that does not decode.
+        for payload in &heard.payloads {
+            let announcement = ovn_protocol::from_cbor_slice::<VideoAnnouncement>(payload);
+            let profile = ovn_protocol::from_cbor_slice::<ovn_protocol::ProfileUpdate>(payload);
+            assert!(
+                announcement.is_ok() || profile.is_ok(),
+                "a payload arrived that is neither an announcement nor a profile update: {:02x?}",
+                &payload[..payload.len().min(64)]
+            );
+        }
+    }
+
+    // A test that hears nothing proves nothing unless it can hear something.
+    // The viewer publishes its own video; the recording must pick it up.
+    let own = write_seeded_file(viewer.dir.path(), "mine.bin", 120_000, 99);
+    let own_cid = publish_until_announced(viewer.node(), &own, "mine", &["mine"]).await;
+    wait_until(PROPAGATION_TIMEOUT, || {
+        heard
+            .lock()
+            .unwrap()
+            .payloads_containing(own_cid.to_string().as_bytes())
+            > 0
+    })
+    .await
+    .expect("the observer can hear the viewer when the viewer does choose to speak");
+
+    recorder.abort();
+    viewer.shutdown().await;
+    library.shutdown().await;
+    observer.shutdown().await.ok();
+    observer_task.await.ok();
 }

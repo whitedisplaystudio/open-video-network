@@ -9,13 +9,15 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main" data-i18n="a11y.skipToContent">Skip to content</a>
+
 <header class="topbar">
   <a class="brand" href="#/home">
     <span class="brand-mark" aria-hidden="true">▶</span>
     <span data-i18n="brand.viewer">ourvideo</span>
   </a>
 
-  <nav class="nav">
+  <nav class="nav" data-i18n-label="nav.viewer.label">
     <button type="button" data-page="home" data-i18n="nav.foryou">For you</button>
     <button type="button" data-page="browse" data-i18n="nav.browse">Browse</button>
     <button type="button" data-page="library" data-i18n="nav.library">Library</button>
@@ -32,7 +34,7 @@
   <label class="sr-only" for="language" data-i18n="language.label">Language</label>
   <select id="language" class="lang-select"></select>
 
-  <span class="badge" id="connection" data-i18n-title="conn.title">
+  <span class="badge" id="connection" data-i18n-title="conn.title" aria-live="polite">
     <span class="dot" aria-hidden="true"></span><span id="connection-text">…</span>
   </span>
   <a class="badge" href="/admin" data-i18n-title="nav.toAdmin.title">
@@ -40,7 +42,7 @@
   </a>
 </header>
 
-<main>
+<main id="main" tabindex="-1">
   <section class="page" data-page="home">
     <div class="page-head"><h1 data-i18n="viewer.foryou.title">For you</h1></div>
     <p class="lede" data-i18n="viewer.foryou.lede"></p>
@@ -71,7 +73,8 @@
   </section>
 
   <section class="page" data-page="watch" hidden>
-    <div class="player-wrap"><video id="player" controls playsinline preload="metadata"></video></div>
+    <div class="player-wrap"><video id="player" controls playsinline preload="metadata"
+         data-i18n-label="a11y.player"></video></div>
 
     <div class="watch-head">
       <h1 id="watch-title">…</h1>
@@ -100,7 +103,7 @@
   </section>
 </main>
 
-<div id="toasts"></div>
+<div id="toasts" role="status" aria-live="polite"></div>
 <script type="module" src="/assets/viewer.js"></script>
 </body>
 </html>
