@@ -267,6 +267,24 @@ api.token       The local API's bearer token, 0600. Kept so a browser stays
                 signed in across restarts; delete it and restart to revoke.
 ```
 
+#### Back up `identity.key`
+
+There is no account, no password and no sign-up here, and the reason is that
+there is no server holding one. The other side of that is worth stating
+plainly:
+
+* **Lose the file and the identity is gone.** Nobody can reissue it. Videos you
+  published stay on the network, but you can never add to that name again.
+* **Copy the file and somebody is you.** There is no way to revoke it, because
+  revoking means telling a central authority, and there isn't one.
+
+It is 32 bytes. Copy it somewhere safe and keep it as private as it is on
+disk — anywhere you would keep an SSH key.
+
+Moving to a new computer is the same file: copy `identity.key` across and your
+channel, your subscribers' subscriptions and everything you have published
+follow you.
+
 ---
 
 ## Local HTTP API
