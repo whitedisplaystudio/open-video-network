@@ -238,7 +238,6 @@ async fn health() -> &'static str {
 /// shipping ours.
 async fn about() -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "name": env!("CARGO_PKG_NAME"),
         "version": env!("CARGO_PKG_VERSION"),
         "protocolVersion": ovn_protocol::PROTOCOL_VERSION,
         "licence": env!("CARGO_PKG_LICENSE"),
