@@ -3,7 +3,7 @@
 import {
   get, post, del, api, bytes, duration, ago, date, decimal, percent, number,
   el, mount, empty, toast, reportError, liveEvents, poll, router, shortId,
-  t, languagePicker, whenLocaleChanges,
+  t, languagePicker, whenLocaleChanges, sourceNotice,
 } from '/assets/common.js';
 
 const $ = (id) => document.getElementById(id);
@@ -518,6 +518,7 @@ async function boot() {
     reportError(error);
   }
 
+  sourceNotice();
   wireEvents();
   poll(() => loadOverview(), 5000);
 }

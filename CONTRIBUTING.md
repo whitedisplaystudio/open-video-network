@@ -88,5 +88,21 @@ Do not open a public issue for a vulnerability. See
 
 ## Licence
 
-Contributions are licensed under the same terms as the project: Apache-2.0 or
-MIT, at the user's option. By opening a pull request you agree to that.
+The project is licensed under the [GNU Affero General Public License, version 3
+or later](LICENSE). By opening a pull request you agree that your contribution
+is licensed on those same terms — inbound matches outbound, so there is no
+separate agreement to sign and no copyright assignment.
+
+Add a `Signed-off-by` line to each commit, which is the
+[Developer Certificate of Origin](https://developercertificate.org/): it says
+you have the right to submit the work under the project's licence.
+
+```bash
+git commit -s -m "your message"
+```
+
+If you are contributing a translation, that is all it takes — see
+[`docs/TRANSLATING.md`](docs/TRANSLATING.md).
+
+The name is separate from the code: see [`TRADEMARK.md`](TRADEMARK.md). It does
+not restrict contributing, only naming a modified version after this one.

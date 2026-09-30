@@ -486,6 +486,25 @@ ul.plain { list-style: none; margin: 0; padding: 0; }
 
 [dir="rtl"] .brand-mark { transform: scaleX(-1); }
 
+/* Where this build came from. The AGPL requires a user who reaches the node
+   over a network to be offered its source, so the notice is part of the page
+   rather than something to go looking for. */
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 1180px;
+  margin: 32px auto 24px;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.footer a { color: var(--text-dim); }
+.footer-sep { color: var(--border-strong); }
+
 /* Keyboard focus, in one place, for everything operable. Offset so the ring
    sits outside the control rather than on top of its own border. */
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {

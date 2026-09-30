@@ -172,6 +172,44 @@ because an identifier is not a word.
 
 ---
 
+## Reviewing a pack somebody else wrote
+
+This is the most useful thing a native speaker can do here, and it needs no
+Rust and no build.
+
+Of the five packs that ship, **English** and **日本語** have been gone over by
+people who write them. **Español**, **Português** and **العربية** have not:
+they were written by someone who does not speak them, from the English, and
+they are certainly stiff in places and wrong in some. Treat them as a first
+draft that needs a native pass, not as a finished translation.
+
+What to look for, roughly in order of how much it matters:
+
+1. **Sentences that no native speaker would write.** Word-for-word renderings
+   of English structure are the usual problem. Rewrite them the way your
+   language would say it.
+2. **Promises that read as marketing.** Several strings tell someone that
+   nothing was sent anywhere, or that hiding something affects only their own
+   node. If those read like a feature being sold rather than a fact being
+   stated, they are wrong, however accurate the words are.
+3. **The wrong register.** The interface addresses one person about their own
+   machine. A pack that slips into corporate or legal register is worse than
+   one with a clumsy sentence.
+4. **Terms that already have a settled form** in your language's technical
+   writing. Do not accept an invented word where a familiar one exists.
+5. **Plurals**, which are easy to get wrong from the outside — see the plural
+   section above for the categories your language actually needs.
+
+You do not have to fix the whole file. One key is a useful pull request, and
+so is an issue that only says which sentence is wrong and why. If you would
+rather not open either, say so however is convenient; somebody will carry it
+across.
+
+If you are reviewing rather than adding, the diff is only inside
+`crates/node/src/ui/locales/<code>.json`. Nothing else needs touching.
+
+---
+
 ## Contributing it back
 
 Once a pack is reasonably complete, open a pull request adding it to

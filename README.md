@@ -540,8 +540,22 @@ are welcome — start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Translations are the easiest place
 to begin: [`docs/TRANSLATING.md`](docs/TRANSLATING.md).
 
-Licensed under either of [Apache License 2.0](LICENSE-APACHE) or
-[MIT licence](LICENSE-MIT) at your option. This dual licence is the Rust
-ecosystem's convention and is the project's working default; the design
-document lists the licence as undecided, so the BDFL may still change it
-before the first release.
+### Licence
+
+The code is under the [GNU Affero General Public License v3 or later](LICENSE).
+
+Free to use, free to modify, no payment and no permission needed. The one
+condition: if you distribute a modified version, or run one as a service other
+people reach over a network, you have to publish your full source under the
+same licence. Nobody can take this, close it, and sell it back.
+
+**The protocol is not under that licence.** The wire format in
+[`protocol/SPECIFICATION.md`](protocol/SPECIFICATION.md) is
+[CC BY 4.0](protocol/LICENSE), and implementing it needs no permission from
+anyone, under any licence, open or not. A protocol only one codebase may speak
+is one codebase's protocol, which is the thing Principle 1 exists to prevent.
+
+**The name is separate from the code.** See [`TRADEMARK.md`](TRADEMARK.md).
+Fork it, change it, ship it — but call it something else, so that a user handed
+a modified build can tell. No licence can forbid a copy; what this stops is a
+copy passing itself off as the original.

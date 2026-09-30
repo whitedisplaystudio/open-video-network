@@ -495,6 +495,35 @@ export function poll(fn, ms) {
   };
 }
 
+/**
+ * Fill in the footer's source link from what the node reports about itself.
+ *
+ * The URL comes from the build rather than from this file, so a fork that
+ * changes `repository` in its `Cargo.toml` — which the AGPL requires it to do
+ * once it has modified anything — points at its own source rather than ours.
+ * `/v1/about` needs no token: the licence requires the offer to reach anyone
+ * who can reach the program.
+ */
+export async function sourceNotice() {
+  const link = document.getElementById('source-link');
+  const version = document.getElementById('build-version');
+  if (!link && !version) return;
+  try {
+    const about = await api('/v1/about');
+    if (link && about.sourceUrl) link.href = about.sourceUrl;
+    if (version) {
+      version.textContent = t('footer.build', {
+        version: about.version,
+        licence: about.licence,
+      });
+    }
+  } catch {
+    // The page still works without it; hide the half-filled line rather than
+    // show a link that goes nowhere.
+    if (link) link.removeAttribute('href');
+  }
+}
+
 /** Wire up a `.nav` whose buttons carry `data-page`, and the matching pages. */
 export function router(onChange) {
   const show = () => {

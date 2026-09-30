@@ -83,3 +83,9 @@ The licence permits forking and nobody needs permission. Given Principle 1,
 a fork that implements this protocol is not even a separate network: nodes
 from both still talk to each other. That is intended. It is the practical
 limit on how much any governance structure here can matter.
+
+Two things come with it. The [AGPL](LICENSE) means a fork is still free
+software: whoever receives it can read it and fork it again, which is what stops
+a fork from becoming somebody's closed product. And [`TRADEMARK.md`](TRADEMARK.md)
+asks a modified fork to take its own name — not to slow anyone down, but so that
+a user handed a build can tell whose it is.

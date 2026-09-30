@@ -3,6 +3,7 @@
 import {
   get, post, bytes, duration, date, decimal, el, mount, empty, toast, reportError,
   liveEvents, poll, router, go, shortId, t, languagePicker, whenLocaleChanges,
+  sourceNotice,
 } from '/assets/common.js';
 
 const $ = (id) => document.getElementById(id);
@@ -385,6 +386,7 @@ async function boot() {
   } catch (error) {
     reportError(error);
   }
+  sourceNotice();
   watchConnection();
 }
 

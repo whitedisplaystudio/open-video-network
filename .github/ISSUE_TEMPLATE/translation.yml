@@ -1,0 +1,41 @@
+name: Translation problem
+description: A word or sentence in the interface is wrong, unnatural, or missing
+labels: ["translation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you — this is genuinely the most useful kind of report for this
+        project. Español, Português and العربية were written by someone who
+        does not speak them, so anything you find is expected rather than
+        surprising.
+
+        You do not need to suggest a replacement. "This sentence is wrong" with
+        the sentence in it is enough.
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      placeholder: es, pt, ar, ja, en, or the code of a pack you are using
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What it says now
+      description: Paste the text, or say where in the interface it appears.
+    validations:
+      required: true
+  - type: textarea
+    id: better
+    attributes:
+      label: What it should say
+      description: Optional. Leave it blank if you would rather just flag it.
+  - type: textarea
+    id: why
+    attributes:
+      label: Why the current wording is wrong
+      description: >
+        Optional, but the most valuable part. Stiff word order, wrong register,
+        a term nobody uses, a promise that reads as a sales pitch — whatever it
+        is.

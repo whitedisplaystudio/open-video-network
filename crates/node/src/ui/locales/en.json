@@ -247,6 +247,9 @@
     "admin.log.fetched": "fetched {cid} — {bytes}",
     "admin.log.fetchFailed": "fetch failed {cid}: {error}",
     "error.unauthorised": "This page is not authorised. Run `ourvideo ui` and open the link it prints.",
-    "error.unexpected": "The node replied with something unexpected."
+    "error.unexpected": "The node replied with something unexpected.",
+    "footer.licence": "Free software under the AGPL v3 or later.",
+    "footer.source": "Source code",
+    "footer.build": "v{version} · {licence}"
   }
 }

@@ -229,6 +229,9 @@
     "admin.log.fetched": "baixado {cid} — {bytes}",
     "admin.log.fetchFailed": "falha ao baixar {cid}: {error}",
     "error.unauthorised": "Esta página não está autorizada. Execute `ourvideo ui` e abra o link que aparecer.",
-    "error.unexpected": "O nó respondeu algo inesperado."
+    "error.unexpected": "O nó respondeu algo inesperado.",
+    "footer.licence": "Software livre sob a AGPL v3 ou posterior.",
+    "footer.source": "Código-fonte",
+    "footer.build": "v{version} · {licence}"
   }
 }

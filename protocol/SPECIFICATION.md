@@ -11,6 +11,12 @@ Where this document and the Rust code disagree, this document is wrong and
 should be fixed — but the Rust code has a test for nearly everything below, so
 check those first (`crates/protocol/src/`).
 
+**Licence.** This document is [CC BY 4.0](LICENSE), and implementing what it
+describes needs no permission from anyone, under any licence, open source or
+not. The reference implementation is under the AGPL; that covers the code, not
+the protocol. A protocol only one codebase may speak is that codebase's private
+protocol, which Principle 1 exists to prevent.
+
 ---
 
 ## 1. Conventions

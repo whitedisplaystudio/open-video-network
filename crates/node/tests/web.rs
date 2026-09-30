@@ -836,3 +836,57 @@ async fn an_empty_upload_is_refused() {
 
     node.shutdown().await;
 }
+
+/// Section 13 of the AGPL: a user who interacts with the program over a
+/// network must be offered its Corresponding Source. For this node the
+/// interaction is the web interface, so the offer has to be reachable by
+/// anyone who can reach the pages — which means outside the token.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_source_offer_is_reachable_without_signing_in() {
+    let node = spawn_node_with("licensed", |config| {
+        config.api_auth = ovn_node::ApiAuth::Token;
+    })
+    .await;
+    let base = node
+        .running
+        .api_url()
+        .expect("the node serves its local API");
+
+    let response = reqwest::get(format!("{base}/v1/about"))
+        .await
+        .expect("asking the node about itself");
+    assert!(
+        response.status().is_success(),
+        "the source offer must not need a token: {}",
+        response.status()
+    );
+    let about: serde_json::Value = response.json().await.expect("JSON");
+
+    let source = about["sourceUrl"].as_str().unwrap_or_default();
+    assert!(
+        source.starts_with("https://"),
+        "the offer has to be somewhere a person can actually go: {source:?}"
+    );
+    let licence = about["licence"].as_str().unwrap_or_default();
+    assert!(
+        licence.contains("AGPL"),
+        "the node should name the licence it is under, not a different one: {licence:?}"
+    );
+    assert!(!about["version"].as_str().unwrap_or_default().is_empty());
+
+    // And the pages have somewhere to put it.
+    for page in ["/ui", "/admin"] {
+        let html = reqwest::get(format!("{base}{page}"))
+            .await
+            .expect("fetching the page")
+            .text()
+            .await
+            .expect("the page body");
+        assert!(
+            html.contains("id=\"source-link\""),
+            "{page} has nowhere to show where its source is"
+        );
+    }
+
+    node.shutdown().await;
+}

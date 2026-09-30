@@ -222,6 +222,9 @@
     "admin.log.fetched": "取得完了 {cid} — {bytes}",
     "admin.log.fetchFailed": "取得失敗 {cid}: {error}",
     "error.unauthorised": "この画面はまだ許可されていません。`ourvideo ui` を実行して、表示されたリンクを開いてください。",
-    "error.unexpected": "ノードから予期しない応答が返りました。"
+    "error.unexpected": "ノードから予期しない応答が返りました。",
+    "footer.licence": "AGPL v3 以降のフリーソフトウェアです。",
+    "footer.source": "ソースコード",
+    "footer.build": "v{version} · {licence}"
   }
 }

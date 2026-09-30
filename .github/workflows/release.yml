@@ -69,7 +69,9 @@ jobs:
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/ourvideo dist/
-          cp README.md README.ja.md LICENSE LICENSE-MIT LICENSE-APACHE dist/
+          # The AGPL travels with the binary, and so does the trademark
+          # policy: somebody who forks this needs to know to rename it.
+          cp README.md README.ja.md LICENSE TRADEMARK.md dist/
           tar -czf ${{ matrix.name }}.tar.gz -C dist .
           shasum -a 256 ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
 
@@ -79,7 +81,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target/${{ matrix.target }}/release/ourvideo.exe dist/
-          Copy-Item README.md, README.ja.md, LICENSE, LICENSE-MIT, LICENSE-APACHE dist/
+          Copy-Item README.md, README.ja.md, LICENSE, TRADEMARK.md dist/
           Compress-Archive -Path dist/* -DestinationPath ${{ matrix.name }}.zip
           (Get-FileHash ${{ matrix.name }}.zip -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.name }}.zip" `
             | Out-File -Encoding ascii ${{ matrix.name }}.zip.sha256

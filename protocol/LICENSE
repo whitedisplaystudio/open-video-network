@@ -1,0 +1,34 @@
+# Licence for the specification
+
+`SPECIFICATION.md` in this directory is licensed under the
+**Creative Commons Attribution 4.0 International** licence (CC BY 4.0).
+
+    https://creativecommons.org/licenses/by/4.0/
+    Full text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+You may copy, redistribute, adapt and build on it, for any purpose including
+commercially, as long as you give credit.
+
+## Implementing the protocol needs no permission
+
+To be explicit, because a licence on a document is not the same thing as
+permission to implement what it describes:
+
+**Anyone may implement this protocol, in any language, under any licence, open
+source or not, without asking and without owing anything to this project.**
+
+The reference implementation is under the AGPL. That licence applies to *that
+code*. It does not reach an independent implementation written from this
+document, and it is not meant to.
+
+This is not generosity. Principle 1 says the network must not depend on any
+particular person or organisation, and a protocol that only one codebase is
+allowed to speak is that codebase's private protocol. An interoperable
+implementation by someone else is the principle working.
+
+## Trademarks are still separate
+
+Implementing the protocol does not grant any right to the project's name or
+marks. Keep the protocol identifiers — `/ovn/kad/1.0.0`, the gossip topics, the
+`ourvideo://` scheme — because interoperating requires them. Do not call your
+implementation Open Video Network. See [`../TRADEMARK.md`](../TRADEMARK.md).

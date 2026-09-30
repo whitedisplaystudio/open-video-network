@@ -135,6 +135,10 @@ fn router(node: Node) -> Router {
         // Public: this is what a URL hands to a newcomer.
         .route(ovn_protocol::WELL_KNOWN_DESCRIPTOR_PATH, get(descriptor))
         .route("/health", get(health))
+        // Where this build's source is. Section 13 of the AGPL requires that a
+        // user who reaches the program over a network be offered it, so it sits
+        // outside the token like the pages do.
+        .route("/v1/about", get(about))
         // The web UI. The pages themselves hold no data — everything they
         // show comes from /v1, which is authenticated — so they are served
         // without a token. `/auth` is what turns a token into a cookie.
@@ -224,6 +228,22 @@ async fn require_token(
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// What this build is and where its source lives.
+///
+/// Read from the crate metadata rather than written out here, so that a fork
+/// which changes `repository` in `Cargo.toml` — as the AGPL requires it to,
+/// once it has modified anything — gets a correct notice for free instead of
+/// shipping ours.
+async fn about() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "name": env!("CARGO_PKG_NAME"),
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocolVersion": ovn_protocol::PROTOCOL_VERSION,
+        "licence": env!("CARGO_PKG_LICENSE"),
+        "sourceUrl": env!("CARGO_PKG_REPOSITORY"),
+    }))
 }
 
 async fn descriptor(State(node): State<Node>) -> ApiResult<Json<ovn_protocol::NodeDescriptor>> {
