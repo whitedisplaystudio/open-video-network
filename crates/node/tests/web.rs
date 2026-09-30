@@ -890,3 +890,84 @@ async fn the_source_offer_is_reachable_without_signing_in() {
 
     node.shutdown().await;
 }
+
+/// Bound beyond loopback, the node has to answer to its own address — a
+/// phone reaches it that way — but must still refuse a *name*, because DNS
+/// rebinding works by pointing a hostname at a private address.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_on_the_network_answers_to_addresses_and_refuses_names() {
+    let node = spawn_node_with("lan", |config| {
+        config.api_addr =
+            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0);
+    })
+    .await;
+    let base = node.running.api_url().expect("an API");
+    let token = node.node().api_token().to_string();
+    let client = reqwest::Client::new();
+
+    // Loopback-bound: a request naming any address other than loopback is
+    // refused, which is the behaviour every other test relies on.
+    let response = client
+        .get(format!("{base}/v1/status"))
+        .header("Host", "192.168.0.10")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::MISDIRECTED_REQUEST,
+        "a loopback-bound node must not answer to another address"
+    );
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hostname_is_refused_even_when_the_node_is_on_the_network() {
+    let node = spawn_node_with("lan", |config| {
+        // As `--lan` sets it.
+        config.api_addr =
+            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0);
+    })
+    .await;
+    let port = node.running.api_addr().expect("an API").port();
+    let token = node.node().api_token().to_string();
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{port}");
+
+    // An address is how a phone reaches it, so that is allowed.
+    let allowed = client
+        .get(format!("{base}/v1/status"))
+        .header("Host", format!("192.168.0.10:{port}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("request");
+    assert!(allowed.status().is_success(), "{}", allowed.status());
+
+    // A name is not, however it resolves.
+    let refused = client
+        .get(format!("{base}/v1/status"))
+        .header("Host", "attacker.example")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(
+        refused.status(),
+        reqwest::StatusCode::MISDIRECTED_REQUEST,
+        "a hostname must be refused: that is what DNS rebinding uses"
+    );
+
+    // And the token is still the thing that grants access.
+    let no_token = client
+        .get(format!("{base}/v1/status"))
+        .header("Host", format!("192.168.0.10:{port}"))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(no_token.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    node.shutdown().await;
+}

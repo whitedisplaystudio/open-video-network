@@ -149,9 +149,18 @@ struct StartArgs {
     /// Port for peer-to-peer traffic (QUIC and TCP).
     #[arg(long, default_value_t = DEFAULT_P2P_PORT)]
     port: u16,
-    /// Port for the local API, bound to 127.0.0.1 only.
+    /// Port for the local API.
     #[arg(long, default_value_t = DEFAULT_API_PORT)]
     api_port: u16,
+    /// Also answer on this machine's network address, so a phone or another
+    /// computer on the same network can open the web interface.
+    ///
+    /// Off by default: the interface can read your viewing history and
+    /// control this node. With this on, a token is required — `--ui-auth
+    /// none` is refused — and the node still refuses any request that names
+    /// it by a hostname rather than an address.
+    #[arg(long)]
+    lan: bool,
     /// Name to publish in this node's descriptor.
     #[arg(long)]
     name: Option<String>,
@@ -347,6 +356,35 @@ async fn doctor(args: DoctorArgs, data_dir: PathBuf, as_json: bool) -> Result<()
     }
 }
 
+/// This machine's addresses on the networks it is attached to.
+///
+/// Read from the interfaces rather than guessed, and loopback is left out
+/// because the banner has already printed that one.
+fn lan_urls(port: u16) -> Vec<String> {
+    let Ok(output) = std::process::Command::new("ifconfig").output() else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut urls = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("inet ") else {
+            continue;
+        };
+        let Some(address) = rest.split_whitespace().next() else {
+            continue;
+        };
+        let Ok(ip) = address.parse::<std::net::IpAddr>() else {
+            continue;
+        };
+        if ip.is_loopback() {
+            continue;
+        }
+        urls.push(format!("http://{ip}:{port}"));
+    }
+    urls
+}
+
 async fn start(args: StartArgs, data_dir: PathBuf) -> Result<()> {
     init_logging();
 
@@ -367,6 +405,19 @@ async fn start(args: StartArgs, data_dir: PathBuf) -> Result<()> {
         .ui_auth
         .parse()
         .map_err(|e| anyhow::anyhow!("--ui-auth: {e}"))?;
+    if args.lan {
+        if config.api_auth == ovn_node::ApiAuth::None {
+            return Err(anyhow::anyhow!(
+                "--lan and --ui-auth none together would let anyone on your network \n\
+                 read your viewing history and control this node. Drop one of them."
+            ));
+        }
+        // Every interface, so it works whichever one the phone is on.
+        config.api_addr = std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            args.api_port,
+        );
+    }
     for addr in &args.bootstrap {
         config.network.bootstrap_addrs.push(
             addr.parse()
@@ -415,6 +466,21 @@ async fn start(args: StartArgs, data_dir: PathBuf) -> Result<()> {
         } else {
             println!("The first time you open these in a browser, run `ourvideo ui` to");
             println!("sign that browser in. After that you can bookmark them.");
+        }
+        if !running.node().config().api_is_loopback() {
+            println!();
+            println!("Reachable from your network (--lan). On a phone on the same");
+            println!("Wi-Fi, open this once — it signs that browser in, then bookmark it:");
+            println!();
+            for address in lan_urls(running.node().config().api_addr.port()) {
+                println!(
+                    "  {address}/auth?token={}&next=/ui",
+                    running.node().api_token()
+                );
+            }
+            println!();
+            println!("Anyone on this network who has that link has this node. Stop");
+            println!("sharing it by deleting api.token and restarting.");
         }
     }
     println!();

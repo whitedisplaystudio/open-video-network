@@ -199,6 +199,28 @@ work with a node other than the default one.
 | `--locale` | detected | Interface language, e.g. `ja` or `pt-BR`. Unset, it is worked out from the browser and this machine. |
 | `--ui-auth` | `token` | `none` lets a bookmarked URL work with no sign-in. Only for a machine you do not share — see below. |
 
+### Watching from a phone
+
+The local API answers on `127.0.0.1` only, so nothing else on your network can
+reach it. `--lan` opens it to the network you are on, for the case where the
+node runs on a desktop and you want to watch on a phone:
+
+```bash
+ourvideo start --lan
+```
+
+It prints a URL with a token in it. Open that once on the phone; it is
+exchanged for a session cookie, and afterwards `http://<address>:4801/ui`
+works on its own and can be bookmarked.
+
+Two things this does **not** relax. A token is required — `--lan --ui-auth
+none` is refused, because together they would let anyone on the network read
+your viewing history and control the node. And the node still answers only to
+its own address, never to a hostname, which is what DNS rebinding needs.
+
+Anyone holding that URL has the node. Delete `api.token` and restart to revoke
+every session.
+
 ### Ports
 
 `4800` (UDP and TCP) and `4801` (TCP, loopback) are the defaults. They were

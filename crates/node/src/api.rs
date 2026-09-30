@@ -168,7 +168,10 @@ fn router(node: Node) -> Router {
         .merge(protected)
         // Applied to everything, including the public routes: a page on
         // another origin must not be able to drive this node.
-        .layer(axum::middleware::from_fn(require_local_host))
+        .layer(axum::middleware::from_fn_with_state(
+            node.clone(),
+            require_local_host,
+        ))
         .with_state(node)
 }
 
@@ -179,6 +182,7 @@ fn router(node: Node) -> Router {
 /// browser treats their page as same-origin with this server. Checking the
 /// host they asked for closes that.
 async fn require_local_host(
+    State(node): State<Node>,
     request: Request,
     next: Next,
 ) -> std::result::Result<Response, StatusCode> {
@@ -197,11 +201,22 @@ async fn require_local_host(
         .trim_end_matches(']');
 
     if host.is_empty() || matches!(name, "127.0.0.1" | "localhost" | "::1") {
-        Ok(next.run(request).await)
-    } else {
-        tracing::warn!(%host, "refused a request for a non-loopback host name");
-        Err(StatusCode::MISDIRECTED_REQUEST)
+        return Ok(next.run(request).await);
     }
+
+    // Bound beyond loopback, a phone on the same network reaches this node by
+    // its address, so the check cannot be a loopback-only one any more. It
+    // still refuses *names*: DNS rebinding works by making a hostname resolve
+    // to a private address, and a literal address is not a name. Reaching the
+    // node by its address is not itself access — the token is mandatory in
+    // this mode, and the session cookie is `SameSite=Strict`, so a page on
+    // another origin gets nothing.
+    if !node.config().api_is_loopback() && name.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(next.run(request).await);
+    }
+
+    tracing::warn!(%host, "refused a request for a host name this node does not answer to");
+    Err(StatusCode::MISDIRECTED_REQUEST)
 }
 
 /// Constant-time-ish bearer check. The token is 32 random bytes, so an

@@ -122,6 +122,15 @@ impl NodeConfig {
         self
     }
 
+    /// Is the local API reachable only from this machine?
+    ///
+    /// The default, and what nearly every other decision here assumes. Bound
+    /// wider, the node is on someone's home network and the token stops
+    /// being optional.
+    pub fn api_is_loopback(&self) -> bool {
+        self.api_addr.ip().is_loopback()
+    }
+
     pub fn identity_path(&self) -> PathBuf {
         self.data_dir.join("identity.key")
     }
