@@ -16,7 +16,13 @@ fn ui_dir() -> PathBuf {
 
 fn read(name: &str) -> String {
     let path = ui_dir().join(name);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    // `.gitattributes` asks for LF everywhere, but a checkout configured
+    // otherwise should make a test fail for a real reason or not at all — not
+    // because an assertion spanning a newline met `\r\n`. This is how the
+    // Windows runner failed while Linux and macOS passed.
+    text.replace("\r\n", "\n")
 }
 
 /// Element ids a script looks up, from `$('x')` and `getElementById('x')`.

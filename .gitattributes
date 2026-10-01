@@ -1,0 +1,24 @@
+# Line endings are LF everywhere, including on Windows checkouts.
+#
+# Not a style preference. The files under `crates/node/src/ui/` are embedded
+# with `include_str!` and served to browsers byte for byte, so a CRLF checkout
+# would make a Windows-built binary serve different bytes than a Linux-built
+# one. For a project handing out unsigned binaries with a provenance
+# attestation, "the same source produces the same output" is worth more than
+# matching the platform's convention.
+#
+# It also stops a test that matches across a newline from passing on two
+# platforms and failing on the third.
+* text=auto eol=lf
+
+# Anything that is not text, so git never touches the bytes.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.mp4 binary
+*.webm binary
