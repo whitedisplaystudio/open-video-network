@@ -1,16 +1,21 @@
 name: CI
 
-# Runs only when asked: from the Actions tab, or `gh workflow run ci.yml`.
+# The repository is public, so runner minutes are not metered. Minutes are
+# not the only cost, though: a macOS arm64 runner can sit in a queue for a
+# while, and a run nobody reads is still noise. So the platform spread is
+# matched to how much each case tells you.
 #
-# Runner minutes are metered while this repository is private, and the
-# multipliers are not equal — Linux counts 1x, Windows 2x and macOS 10x — so
-# nothing here starts on its own. Run it before tagging a release, and after
-# anything that touches platform-specific code.
+#   every push and pull request   Linux — fast, and catches nearly everything
+#   pushes to main                all three — where platform differences bite
+#   run by hand                   whatever you pick
 #
-# To go back to running on every push, add a `push:` trigger below. Making
-# the repository public removes the metering entirely.
+# Everything the tests need is in the repository; there are no secrets, so a
+# pull request from a fork runs the same as a branch here.
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
     inputs:
       platforms:
@@ -61,7 +66,12 @@ jobs:
 
   other-platforms:
     name: ${{ matrix.os }}
-    if: inputs.platforms == 'all'
+    # On main because that is the branch a release is cut from, and on
+    # request. Not on every pull request: Linux has already said whether the
+    # code works, and these two are slow to start.
+    if: >-
+      inputs.platforms == 'all' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     strategy:
       fail-fast: false
       matrix:

@@ -515,19 +515,26 @@ OVN_FUZZ_ITERATIONS=5000000 cargo test -p ovn-node --test untrusted_input --rele
 OVN_SOAK_SECONDS=900 cargo test -p ovn-node --test soak --release -- --ignored --nocapture
 ```
 
-[CI](.github/workflows/ci.yml) runs the same three on GitHub's machines, and
-only when asked:
+[CI](.github/workflows/ci.yml) runs the same three on GitHub's machines.
+Runner minutes are not metered on a public repository, so it runs on its own:
+
+| When | What |
+| --- | --- |
+| Every push and pull request | Linux — fast, and catches nearly everything |
+| Pushes to `main` | All three, where platform differences actually bite |
+| By hand | Whatever you ask for |
 
 ```bash
 gh workflow run ci.yml                        # Linux
 gh workflow run ci.yml -f platforms=all       # Linux, macOS and Windows
 ```
 
-Nothing starts on its own, because runner minutes are metered while this
-repository is private and the multipliers are unequal — Linux counts 1x,
-Windows 2x, macOS 10x. Run it before tagging a release, and after anything
-that touches platform-specific code. Making the repository public removes
-the metering, and the reason for the restraint.
+macOS and Windows are kept off pull requests on purpose: Linux has already
+said whether the code works, and a macOS arm64 runner can sit in a queue for
+a while. Minutes being free does not make a run nobody reads worth starting.
+
+There are no secrets in the workflow, so a pull request from a fork runs
+exactly as a branch here does.
 
 The acceptance tests in `crates/node/tests/acceptance.rs` start real nodes —
 real identities, real SQLite files, real libp2p swarms on ephemeral loopback

@@ -377,18 +377,26 @@ OVN_FUZZ_ITERATIONS=5000000 cargo test -p ovn-node --test untrusted_input --rele
 OVN_SOAK_SECONDS=900 cargo test -p ovn-node --test soak --release -- --ignored --nocapture
 ```
 
-[CI](.github/workflows/ci.yml) は GitHub のマシン上で同じ3つを実行しますが、
-**指示したときだけ**動きます。
+[CI](.github/workflows/ci.yml) は GitHub のマシン上で同じ 3 つを実行します。
+公開リポジトリでは実行時間が課金対象外なので、自動で動きます。
+
+| タイミング | 対象 |
+| --- | --- |
+| 全ての push と Pull Request | Linux（速く、ほぼ全部を捕まえます） |
+| `main` への push | 3 プラットフォーム全部（差が出るのはここ） |
+| 手動 | 指定したもの |
 
 ```bash
 gh workflow run ci.yml                        # Linux のみ
 gh workflow run ci.yml -f platforms=all       # Linux / macOS / Windows
 ```
 
-自動では一切起動しません。非公開リポジトリでは実行時間が課金対象で、倍率も
-一定ではないためです（Linux 1倍、Windows 2倍、macOS 10倍）。リリースにタグを
-打つ前と、プラットフォーム依存のコードを触ったあとに実行してください。
-公開リポジトリにすれば課金がなくなり、この制約自体が不要になります。
+macOS と Windows は Pull Request では意図的に走らせていません。Linux が
+すでに答えを出していますし、macOS arm64 のランナーは待たされることがあります。
+無料だからといって、誰も読まない実行を始める理由にはなりません。
+
+ワークフローは secrets を使っていないので、フォークからの Pull Request も
+ここのブランチと全く同じように走ります。
 
 `crates/node/tests/acceptance.rs` の受け入れテストは、実際の Node
 （実 Identity・実 SQLite・実 libp2p Swarm、ループバックの空きポート）を
