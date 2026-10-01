@@ -75,6 +75,8 @@ pub enum ProtocolError {
     FieldEmpty(&'static str),
     #[error("invalid content id: {0}")]
     InvalidContentId(String),
+    #[error("invalid source URL: {0}")]
+    InvalidSourceUrl(String),
     #[error("invalid public key")]
     InvalidPublicKey,
     #[error("invalid signature length {0}, expected 64")]
@@ -90,6 +92,34 @@ pub enum ProtocolError {
 }
 
 pub type Result<T> = std::result::Result<T, ProtocolError>;
+
+/// A source URL must be somewhere a node can actually fetch from, and must
+/// not be a way to make a node fetch from itself or from a private address.
+///
+/// Only `https` and `http` are accepted. `http` is allowed because a creator
+/// serving from their own machine on a local network is a real case, and the
+/// bytes are verified against a signed hash either way — transport secrecy is
+/// not what protects them.
+pub fn check_source_url(url: &str) -> Result<()> {
+    if url.trim().is_empty() {
+        return Err(ProtocolError::FieldEmpty("sourceUrl"));
+    }
+    check_len("sourceUrl", url.len(), MAX_SOURCE_URL_LEN)?;
+    let lowered = url.to_ascii_lowercase();
+    if !lowered.starts_with("https://") && !lowered.starts_with("http://") {
+        return Err(ProtocolError::InvalidSourceUrl(
+            "must begin https:// or http://".to_string(),
+        ));
+    }
+    // A control character would let an announcement smuggle a header break
+    // into whatever builds a request from this.
+    if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(ProtocolError::InvalidSourceUrl(
+            "contains whitespace or a control character".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// Check a peer's advertised protocol version against what we can speak.
 pub fn check_version(found: u16) -> Result<()> {

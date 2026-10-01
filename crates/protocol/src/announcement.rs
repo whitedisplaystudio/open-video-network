@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::codec::value_to_vec;
 use crate::{
-    check_len, check_not_future, check_version, normalize_tag, now_secs, ContentId, ProtocolError,
-    Result, MAX_BIO_LEN, MAX_DESCRIPTION_LEN, MAX_DISPLAY_NAME_LEN, MAX_DURATION_SECS, MAX_TAGS,
-    MAX_TAG_LEN, MAX_TITLE_LEN, PROTOCOL_VERSION,
+    check_len, check_not_future, check_source_url, check_version, normalize_tag, now_secs,
+    ContentId, ProtocolError, Result, MAX_BIO_LEN, MAX_DESCRIPTION_LEN, MAX_DISPLAY_NAME_LEN,
+    MAX_DURATION_SECS, MAX_TAGS, MAX_TAG_LEN, MAX_TITLE_LEN, PROTOCOL_VERSION,
 };
 
 /// Domain separation tag mixed into the signed bytes so a signature over an
@@ -30,6 +30,8 @@ pub struct NewVideo {
     pub tags: Vec<String>,
     pub duration_secs: u64,
     pub thumbnail_cid: Option<ContentId>,
+    /// Where the video file itself can be fetched.
+    pub source_url: String,
 }
 
 /// A signed claim by a creator that a video exists.
@@ -48,6 +50,17 @@ pub struct VideoAnnouncement {
     pub duration_secs: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail_cid: Option<ContentId>,
+    /// Where the video file is served from, as `https://…`.
+    ///
+    /// The network carries what is needed to find and judge a video — title,
+    /// tags, thumbnail, and the manifest that says what the bytes must hash
+    /// to. It does not carry the bytes. They come from here.
+    ///
+    /// Inside the signature, so whoever relays an announcement cannot point
+    /// viewers somewhere the creator did not choose. What it cannot do is
+    /// make the bytes trustworthy by itself — that is what `videoCid` is
+    /// for.
+    pub source_url: String,
     pub created_at: u64,
     #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
@@ -74,6 +87,7 @@ impl VideoAnnouncement {
             tags,
             duration_secs: new.duration_secs,
             thumbnail_cid: new.thumbnail_cid,
+            source_url: new.source_url,
             created_at: now_secs(),
             signature: Vec::new(),
         };
@@ -99,6 +113,7 @@ impl VideoAnnouncement {
                 Some(cid) => Value::Text(cid.to_string()),
                 None => Value::Null,
             },
+            Value::Text(self.source_url.clone()),
             Value::Integer(self.created_at.into()),
         ]);
         value_to_vec(&value)
@@ -130,6 +145,7 @@ impl VideoAnnouncement {
                 "videoCid must address a dag-cbor manifest".to_string(),
             ));
         }
+        check_source_url(&self.source_url)?;
         check_not_future(self.created_at)?;
         PublicKey::from_bytes(&self.creator_public_key)
             .map_err(|_| ProtocolError::InvalidPublicKey)?;
@@ -245,6 +261,7 @@ mod tests {
                 tags: vec!["Gaming".into(), "gaming".into(), " Indie ".into()],
                 duration_secs: 600,
                 thumbnail_cid: None,
+                source_url: "https://videos.example/clip.mp4".to_string(),
             },
             identity,
         )

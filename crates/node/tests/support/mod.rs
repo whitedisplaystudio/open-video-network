@@ -133,6 +133,17 @@ pub async fn publish_until_announced(
     title: &str,
     tags: &[&str],
 ) -> ovn_protocol::ContentId {
+    publish_until_announced_from(node, path, title, tags, "https://videos.example/clip.mp4").await
+}
+
+/// The same, naming where the file is actually served from.
+pub async fn publish_until_announced_from(
+    node: &ovn_node::Node,
+    path: &std::path::Path,
+    title: &str,
+    tags: &[&str],
+    source_url: &str,
+) -> ovn_protocol::ContentId {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
         let report = node
@@ -141,6 +152,7 @@ pub async fn publish_until_announced(
                 Some(title.to_string()),
                 String::new(),
                 tags.iter().map(|t| t.to_string()).collect(),
+                source_url.to_string(),
             )
             .await
             .expect("publishing");
@@ -191,3 +203,156 @@ pub async fn wait_until_all_discovered(
 }
 
 pub const PROPAGATION_TIMEOUT: Duration = Duration::from_secs(20);
+
+// ------------------------------------------------------- a creator's server
+
+/// A static file server standing in for wherever a creator put their video.
+///
+/// Small on purpose: it speaks exactly the part of HTTP the node relies on —
+/// `Range` with a `206` — so that a test which passes here is a test that
+/// passes against a real server, and a test exercising a *badly behaved*
+/// server can be written by changing one of these flags rather than by mocking
+/// out the fetch.
+pub struct OriginServer {
+    pub base_url: String,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+/// How the server should misbehave, for the tests that need it to.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OriginBehaviour {
+    /// Answer `200` with the whole file however narrow the range asked for.
+    pub ignore_ranges: bool,
+    /// Flip one bit of every body, as a server serving something other than
+    /// what was announced.
+    pub corrupt: bool,
+    /// Answer `404` to everything.
+    pub missing: bool,
+}
+
+impl OriginServer {
+    pub async fn serving(body: Vec<u8>) -> Self {
+        Self::serving_with(body, OriginBehaviour::default()).await
+    }
+
+    pub async fn serving_with(body: Vec<u8>, behaviour: OriginBehaviour) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("binding a test origin");
+        let port = listener.local_addr().expect("local addr").port();
+        let (shutdown, mut stop) = tokio::sync::oneshot::channel();
+        let body = std::sync::Arc::new(body);
+
+        tokio::spawn(async move {
+            loop {
+                let accepted = tokio::select! {
+                    _ = &mut stop => return,
+                    accepted = listener.accept() => accepted,
+                };
+                let Ok((stream, _)) = accepted else { continue };
+                let body = std::sync::Arc::clone(&body);
+                tokio::spawn(async move {
+                    let _ = serve_one(stream, &body, behaviour).await;
+                });
+            }
+        });
+
+        Self {
+            base_url: format!("http://127.0.0.1:{port}/clip.mp4"),
+            shutdown: Some(shutdown),
+        }
+    }
+
+    /// Stop answering, as a creator's server going down.
+    pub fn stop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
+}
+
+impl Drop for OriginServer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+async fn serve_one(
+    mut stream: tokio::net::TcpStream,
+    body: &[u8],
+    behaviour: OriginBehaviour,
+) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Read until the end of the headers. Enough for a request with no body,
+    // which is all this ever receives.
+    let mut request = Vec::new();
+    let mut buffer = [0u8; 1024];
+    loop {
+        let n = stream.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..n]);
+        if request.windows(4).any(|w| w == b"\r\n\r\n") {
+            break;
+        }
+    }
+    let text = String::from_utf8_lossy(&request);
+
+    if behaviour.missing {
+        stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+            .await?;
+        return Ok(());
+    }
+
+    let range = text
+        .lines()
+        .find(|line| line.to_ascii_lowercase().starts_with("range:"))
+        .and_then(|line| line.split('=').nth(1))
+        .and_then(|spec| {
+            let (start, end) = spec.trim().split_once('-')?;
+            Some((start.parse::<usize>().ok()?, end.parse::<usize>().ok()?))
+        });
+
+    let (status, slice) = match range {
+        Some((start, end)) if !behaviour.ignore_ranges && start < body.len() => {
+            let end = end.min(body.len() - 1);
+            ("206 Partial Content", &body[start..=end])
+        }
+        _ => ("200 OK", body),
+    };
+
+    let mut payload = slice.to_vec();
+    if behaviour.corrupt && !payload.is_empty() {
+        let middle = payload.len() / 2;
+        payload[middle] ^= 0b1000_0000;
+    }
+
+    let header = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n\
+         Content-Type: video/mp4\r\n\r\n",
+        payload.len()
+    );
+    stream.write_all(header.as_bytes()).await?;
+    stream.write_all(&payload).await?;
+    stream.flush().await
+}
+
+/// A node that will fetch from a loopback origin, which the guard against
+/// probing a viewer's own network otherwise refuses.
+pub async fn spawn_node_fetching_locally(name: &str) -> TestNode {
+    spawn_node_with(name, |config| config.allow_private_sources = true).await
+}
+
+/// Publish `path`, served from `origin`, retrying until announced.
+pub async fn publish_from(
+    node: &ovn_node::Node,
+    path: &std::path::Path,
+    title: &str,
+    tags: &[&str],
+    origin: &OriginServer,
+) -> ovn_protocol::ContentId {
+    publish_until_announced_from(node, path, title, tags, &origin.base_url).await
+}

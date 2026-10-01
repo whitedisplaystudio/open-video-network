@@ -150,7 +150,7 @@
     "admin.content.title": "コンテンツ",
     "admin.content.lede": "このノードが公開しているものと、ネットワークのために保持しているものです。",
     "admin.publish.title": "動画を公開する",
-    "admin.publish.file": "ファイル",
+    "admin.publish.file": "ファイル（ハッシュ計算とサムネイル取得のため）",
     "admin.publish.titleField": "タイトル",
     "admin.publish.titlePlaceholder": "空欄ならファイル名が使われます",
     "admin.publish.description": "説明",
@@ -256,6 +256,11 @@
     "viewer.channels.clash": "同名あり",
     "viewer.channels.clash.title": "同じ表示名を使う別の身元をこの端末が知っています。鍵を見比べてください。",
     "viewer.channels.clash.warning_one": "注意: {name} と名乗る別の身元を、この端末はすでに {count} 件知っています。名前は誰の所有物でもありません — 所有を記録する名前の登録簿が存在しないからです。渡された鍵と一致するか確認してください。",
-    "viewer.channels.clash.warning_other": "注意: {name} と名乗る別の身元を、この端末はすでに {count} 件知っています。名前は誰の所有物でもありません — 所有を記録する名前の登録簿が存在しないからです。渡された鍵と一致するか確認してください。"
+    "viewer.channels.clash.warning_other": "注意: {name} と名乗る別の身元を、この端末はすでに {count} 件知っています。名前は誰の所有物でもありません — 所有を記録する名前の登録簿が存在しないからです。渡された鍵と一致するか確認してください。",
+    "admin.publish.lede": "ネットワークが運ぶのはタイトル・タグ・サムネイル・そしてファイルが一致すべきハッシュです。ファイル本体は運びません。視聴者はあなたのサーバーから取得し、届いたものをハッシュと照合します。",
+    "admin.publish.sourceUrl": "視聴者の取得先",
+    "admin.publish.sourceUrlPlaceholder": "https://videos.example/clip.mp4",
+    "admin.publish.sourceUrlHint": "このファイルそのものを配信し、Range リクエストに応答する必要があります（全部ダウンロードせずに再生を始めるため）。あとでそこのファイルを差し替えると、全視聴者に「一致しない」と分かります。",
+    "admin.publish.noSourceUrl": "視聴者がファイルを取得するアドレスを入力してください。"
   }
 }

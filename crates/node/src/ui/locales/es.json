@@ -170,7 +170,7 @@
     "admin.content.title": "Contenido",
     "admin.content.lede": "Lo que este nodo publica y lo que guarda para la red.",
     "admin.publish.title": "Publicar un vídeo",
-    "admin.publish.file": "Archivo",
+    "admin.publish.file": "Archivo, para que este nodo lo resuma y tome una miniatura",
     "admin.publish.titleField": "Título",
     "admin.publish.titlePlaceholder": "Si lo dejas vacío se usa el nombre del archivo",
     "admin.publish.description": "Descripción",
@@ -276,6 +276,11 @@
     "viewer.channels.clash": "nombre repetido",
     "viewer.channels.clash.title": "Otra identidad en este dispositivo usa el mismo nombre. Compara la clave.",
     "viewer.channels.clash.warning_one": "Atención: este dispositivo ya conoce {count} otra identidad que se llama {name}. Un nombre no es propiedad de nadie: no existe un registro de nombres donde pudiera serlo. Comprueba que la clave es la que te dieron.",
-    "viewer.channels.clash.warning_other": "Atención: este dispositivo ya conoce {count} identidades más que se llaman {name}. Un nombre no es propiedad de nadie: no existe un registro de nombres donde pudiera serlo. Comprueba que la clave es la que te dieron."
+    "viewer.channels.clash.warning_other": "Atención: este dispositivo ya conoce {count} identidades más que se llaman {name}. Un nombre no es propiedad de nadie: no existe un registro de nombres donde pudiera serlo. Comprueba que la clave es la que te dieron.",
+    "admin.publish.lede": "La red lleva el título, las etiquetas, la miniatura y los hashes que el archivo debe cumplir. No lleva el archivo: quien lo vea lo obtiene de tu propio servidor y comprueba lo que recibe contra esos hashes.",
+    "admin.publish.sourceUrl": "De dónde lo obtienen los espectadores",
+    "admin.publish.sourceUrlPlaceholder": "https://videos.example/clip.mp4",
+    "admin.publish.sourceUrlHint": "Debe servir exactamente este archivo y responder a peticiones de rango, para que la reproducción empiece sin descargarlo entero. Si luego cambias el archivo allí, todos verán que ya no coincide.",
+    "admin.publish.noSourceUrl": "Indica la dirección desde la que se obtendrá el archivo."
   }
 }

@@ -19,6 +19,8 @@ pub struct VideoRecord {
     pub duration_secs: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thumbnail_cid: Option<String>,
+    /// Where the file is served from, as the creator signed it.
+    pub source_url: String,
     pub created_at: i64,
     pub discovered_at: i64,
     /// Published by this node.
@@ -61,6 +63,7 @@ fn row_to_video(row: &Row<'_>) -> rusqlite::Result<VideoRecord> {
         tags: tags.split_whitespace().map(str::to_string).collect(),
         duration_secs: row.get("duration_secs")?,
         thumbnail_cid: row.get("thumbnail_cid")?,
+        source_url: row.get("source_url")?,
         created_at: row.get("created_at")?,
         discovered_at: row.get("discovered_at")?,
         is_local: row.get::<_, i64>("is_local")? != 0,
@@ -70,7 +73,8 @@ fn row_to_video(row: &Row<'_>) -> rusqlite::Result<VideoRecord> {
 }
 
 const VIDEO_COLUMNS: &str = "rowid, cid, creator_public_key, title, description, tags, \
-     duration_secs, thumbnail_cid, created_at, discovered_at, is_local, have_manifest, have_content";
+     duration_secs, thumbnail_cid, source_url, created_at, discovered_at, is_local, \
+     have_manifest, have_content";
 
 impl Database {
     /// Store a verified announcement. Returns `true` if this video is new to
@@ -111,7 +115,7 @@ impl Database {
                 "UPDATE known_videos SET
                      creator_public_key = ?2, title = ?3, description = ?4, tags = ?5,
                      duration_secs = ?6, thumbnail_cid = ?7, created_at = ?8,
-                     announcement = ?9, is_local = MAX(is_local, ?10)
+                     announcement = ?9, is_local = MAX(is_local, ?10), source_url = ?11
                  WHERE cid = ?1",
                 params![
                     &cid,
@@ -124,6 +128,7 @@ impl Database {
                     announcement.created_at as i64,
                     upsert.announcement_bytes,
                     i64::from(upsert.is_local),
+                    &announcement.source_url,
                 ],
             )?;
             return Ok(false);
@@ -133,8 +138,8 @@ impl Database {
             "INSERT INTO known_videos
                  (cid, creator_public_key, title, description, tags, duration_secs,
                   thumbnail_cid, created_at, discovered_at, announcement, is_local,
-                  have_manifest, have_content)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, 0)",
+                  source_url, have_manifest, have_content)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, 0)",
             params![
                 &cid,
                 &creator,
@@ -147,6 +152,7 @@ impl Database {
                 now,
                 upsert.announcement_bytes,
                 i64::from(upsert.is_local),
+                &announcement.source_url,
             ],
         )?;
         Ok(true)
@@ -589,6 +595,7 @@ mod tests {
                 tags: tags.iter().map(|t| t.to_string()).collect(),
                 duration_secs: 120,
                 thumbnail_cid: None,
+                source_url: "https://videos.example/clip.mp4".to_string(),
             },
             identity,
         )

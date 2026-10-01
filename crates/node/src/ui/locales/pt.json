@@ -157,7 +157,7 @@
     "admin.content.title": "Conteúdo",
     "admin.content.lede": "O que este nó publica e o que ele guarda para a rede.",
     "admin.publish.title": "Publicar um vídeo",
-    "admin.publish.file": "Arquivo",
+    "admin.publish.file": "Arquivo, para este nó calcular o hash e tirar uma miniatura",
     "admin.publish.titleField": "Título",
     "admin.publish.titlePlaceholder": "Se deixar vazio, usa o nome do arquivo",
     "admin.publish.description": "Descrição",
@@ -263,6 +263,11 @@
     "viewer.channels.clash": "nome repetido",
     "viewer.channels.clash.title": "Outra identidade neste dispositivo usa o mesmo nome. Compare a chave.",
     "viewer.channels.clash.warning_one": "Atenção: este dispositivo já conhece {count} outra identidade que se chama {name}. Um nome não pertence a ninguém — não existe registro de nomes onde pudesse pertencer. Confira se a chave é a que lhe deram.",
-    "viewer.channels.clash.warning_other": "Atenção: este dispositivo já conhece {count} outras identidades que se chamam {name}. Um nome não pertence a ninguém — não existe registro de nomes onde pudesse pertencer. Confira se a chave é a que lhe deram."
+    "viewer.channels.clash.warning_other": "Atenção: este dispositivo já conhece {count} outras identidades que se chamam {name}. Um nome não pertence a ninguém — não existe registro de nomes onde pudesse pertencer. Confira se a chave é a que lhe deram.",
+    "admin.publish.lede": "A rede leva o título, as etiquetas, a miniatura e os hashes que o arquivo deve cumprir. Ela não leva o arquivo: quem assiste o obtém do seu próprio servidor e confere o que recebe contra esses hashes.",
+    "admin.publish.sourceUrl": "De onde quem assiste vai obtê-lo",
+    "admin.publish.sourceUrlPlaceholder": "https://videos.example/clip.mp4",
+    "admin.publish.sourceUrlHint": "Precisa servir exatamente este arquivo e responder a requisições de faixa, para a reprodução começar sem baixar tudo. Se depois você trocar o arquivo lá, todos verão que ele não corresponde mais.",
+    "admin.publish.noSourceUrl": "Informe o endereço de onde o arquivo será obtido."
   }
 }

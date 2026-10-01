@@ -243,8 +243,9 @@ function wireWatchActions(video) {
   $('download').onclick = async () => {
     try {
       toast(t('viewer.toast.fetching'));
-      await post(`/v1/videos/${video.cid}/fetch`, {});
-      const result = await post(`/v1/videos/${video.cid}/export`, {});
+      // One call now: fetching from the creator's server writes the file as it
+      // verifies each chunk, so there is nothing left to assemble afterwards.
+      const result = await post(`/v1/videos/${video.cid}/fetch`, {});
       toast(t('viewer.toast.saved', { path: result.path }));
       await loadVideos();
     } catch (error) {

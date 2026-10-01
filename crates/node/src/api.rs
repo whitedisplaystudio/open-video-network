@@ -99,7 +99,6 @@ fn router(node: Node) -> Router {
         .route("/v1/videos/local", get(list_local_videos))
         .route("/v1/videos/{cid}", get(video_info))
         .route("/v1/videos/{cid}/fetch", post(fetch_video))
-        .route("/v1/videos/{cid}/export", post(export_video))
         .route(
             "/v1/videos/{cid}/stream",
             get(stream_video).head(stream_video),
@@ -335,6 +334,7 @@ async fn publish_video(
             request.title,
             request.description,
             request.tags,
+            request.source_url,
         )
         .await?
         .into(),
@@ -347,16 +347,6 @@ async fn fetch_video(
 ) -> ApiResult<Json<FetchDto>> {
     let cid = parse_cid(&cid)?;
     Ok(Json(node.fetch_video(cid).await?.into()))
-}
-
-async fn export_video(
-    State(node): State<Node>,
-    Path(cid): Path<String>,
-    Json(request): Json<ExportRequest>,
-) -> ApiResult<Json<serde_json::Value>> {
-    let cid = parse_cid(&cid)?;
-    let path = node.export_video(cid, request.path)?;
-    Ok(Json(serde_json::json!({ "path": path })))
 }
 
 async fn search(
@@ -875,6 +865,9 @@ struct UploadQuery {
     title: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    /// Where the file is served from, which is what the network passes on.
+    #[serde(default)]
+    source_url: Option<String>,
     /// Comma separated, because this arrives in a query string.
     #[serde(default)]
     tags: Option<String>,
@@ -943,12 +936,14 @@ async fn upload_video(
         .map(str::to_string)
         .collect();
 
+    let source_url = query.source_url.unwrap_or_default();
     let result = node
         .publish_video(
             &staged,
             query.title.filter(|t| !t.trim().is_empty()),
             query.description.unwrap_or_default(),
             tags,
+            source_url,
         )
         .await;
     // The bytes now live in the block store, so the staged copy is dead

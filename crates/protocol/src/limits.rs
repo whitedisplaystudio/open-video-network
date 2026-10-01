@@ -24,6 +24,9 @@ pub const MAX_CAPABILITY_LEN: usize = 32;
 pub const MAX_CONTENT_ID_LEN: usize = 128;
 pub const MAX_DISPLAY_NAME_LEN: usize = 128;
 pub const MAX_BIO_LEN: usize = 2048;
+/// A URL long enough for any real one, short enough that an announcement
+/// cannot be padded out with it.
+pub const MAX_SOURCE_URL_LEN: usize = 2048;
 pub const MAX_QUERY_LEN: usize = 256;
 pub const MAX_QUERY_RESULTS: usize = 64;
 pub const MAX_PROVIDERS_PER_RESPONSE: usize = 32;

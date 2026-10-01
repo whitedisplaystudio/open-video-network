@@ -128,75 +128,64 @@ chunk.
 
 ## 6. Content model
 
+A node carries what is needed to **find** a video and to **check** it. It does
+not carry the video. The file is served from wherever the creator put it, named
+by `sourceUrl` in the announcement.
+
+Chunk hashes therefore are not addresses — nobody asks a peer for a chunk — but
+they are still a promise. The creator signs the manifest id; the manifest lists
+what every chunk of the file must hash to. A server that is swapped,
+compromised, or told to serve one viewer something different cannot do it
+without every viewer noticing.
+
 ### 6.1 Chunking
 
-A published file is split into fixed-size chunks of **1 048 576 bytes**
-(1 MiB). Every chunk except the last is exactly that size; the last is in
-`1..=1048576`. Each chunk's identifier is the `raw` CID of its bytes.
+A file is split into **1 MiB** chunks, the last one short. Chunk `i` covers
+bytes `[i × 1048576, min((i+1) × 1048576, total))`.
 
-A node MUST reject any chunk larger than 1 MiB.
+Chunk size is fixed at 1 MiB in protocol version 1. It is the unit a viewer
+requests from the creator's server with a `Range` header, and the unit it
+verifies.
 
 ### 6.2 Merkle root
 
-The manifest carries a Merkle root over the chunk list, so that membership can
-be proved without transferring the whole list.
-
-```
-leaf(i)      = SHA-256( 0x00 || chunk_digest(i) )
-node(l, r)   = SHA-256( 0x01 || l || r )
-```
-
-where `chunk_digest(i)` is the 32-byte digest inside chunk `i`'s CID. Pairs
-are combined left to right; a level with an odd number of nodes promotes the
-last node by combining it with itself, `node(x, x)`. The root of an empty list
-is 32 zero bytes. The leaf and interior prefixes MUST be included: they are
-what prevents an interior hash being presented as a leaf.
+Chunk ids are combined pairwise with domain separation, as in version 1 of this
+document, and the root is recorded in the manifest. A single id commits to the
+whole file.
 
 ### 6.3 Thumbnails
 
-A thumbnail is an ordinary content block: `raw` codec, fetched over the same
-block protocol as any chunk, and named in an announcement's `thumbnailCid`.
-
-* It MUST be a JPEG, and a receiver MUST check the SOI/EOI markers before
-  rendering it. The bytes come from a stranger and are shown to a user.
-* It MUST NOT exceed 524 288 bytes, so it always fits in one chunk.
-* The reference implementation generates one at 10% of the duration, scaled
-  to 640 pixels wide. Neither the offset nor the size is normative: a
-  thumbnail is a hint, and a node that produces none is conformant.
+Thumbnails **do** travel peer to peer: they are small, and a feed that cannot
+show a thumbnail until it has reached the creator's server is a feed that waits
+on somebody else's uptime to draw a grid. Stored as a `raw` block, pinned by the
+publisher, fetched over `/ovn/chunk/1.0.0` like a manifest.
 
 ### 6.4 Manifest
 
-A manifest is a CBOR map. Its `dag-cbor` CID over **the exact bytes
-transferred** is the video's identifier; there is no canonicalisation step, so
-two nodes can never disagree about a video's identity.
+`dag-cbor`, and the thing a `videoCid` addresses:
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `version` | uint | `1` |
-| `mediaType` | text | e.g. `video/mp4`. A display hint only. |
-| `fileName` | text | Original name. Untrusted: sanitise before use as a path. |
-| `totalSize` | uint | Bytes in the original file. |
-| `chunkSize` | uint | `1048576` in version 1. |
-| `chunks` | array of text | Chunk CIDs, in file order. |
-| `merkleRoot` | text | Hex, lowercase, of section 6.2. |
+```
+VideoManifest = {
+  version:    uint,
+  mediaType:  tstr,
+  fileName:   tstr,
+  totalSize:  uint,
+  chunkSize:  uint,       ; 1048576 in version 1
+  chunks:     [* tstr],   ; chunk ids, in order
+  merkleRoot: tstr,
+}
+```
 
-A receiver MUST reject a manifest where:
-
-* `version` is not 1;
-* `chunks` is empty or longer than 65 536;
-* `chunkSize` is zero or greater than 1 MiB;
-* any entry in `chunks` is a `dag-cbor` CID;
-* `totalSize` is not in `((n-1) × chunkSize, (n-1) × chunkSize + chunkSize]`
-  for `n = len(chunks)`;
-* `merkleRoot` does not match a recomputation over `chunks`.
-
----
+Manifests travel peer to peer over `/ovn/chunk/1.0.0`, and nodes advertise
+themselves as Kademlia providers for the manifests they hold. A provider record
+means **"I have this manifest"**, not "I have this video".
 
 ## 7. Messages
 
 ### 7.1 VideoAnnouncement
 
-Announces that a video exists. Carries metadata only — never content.
+Announces that a video exists. Carries metadata and where to fetch the
+file — never the file.
 
 | Field | Type | Signed order | Notes |
 | --- | --- | --- | --- |
@@ -208,11 +197,16 @@ Announces that a video exists. Carries metadata only — never content.
 | `tags` | array of text | 6 | ≤ 32 entries, each ≤ 64 bytes, normalised (section 8). |
 | `durationSecs` | uint | 7 | ≤ 604 800. `0` means unknown. |
 | `thumbnailCid` | text or null | 8 | Optional. |
-| `createdAt` | uint | 9 | Unix seconds. |
-| `signature` | bytes | — | 64 bytes over `[tag, 1..9]`. |
+| `sourceUrl` | text | 9 | Where the file is served from. `https://` or `http://`, ≤ 2048 bytes, no whitespace or control characters. |
+| `createdAt` | uint | 10 | Unix seconds. |
+| `signature` | bytes | — | 64 bytes over `[tag, 1..10]`. |
 
 Signing bytes: `[ "ovn/video-announce/v1", version, videoCid, creatorPublicKey,
-title, description, tags, durationSecs, thumbnailCid, createdAt ]`.
+title, description, tags, durationSecs, thumbnailCid, sourceUrl, createdAt ]`.
+
+`sourceUrl` is inside the signature, so whoever relays an announcement cannot
+point viewers somewhere the creator did not choose. What it cannot do by itself
+is make the bytes there trustworthy — that is what `videoCid` is for.
 
 A receiver MUST discard an announcement that fails any structural check or
 whose signature does not verify. It MUST NOT store it and MUST NOT relay it.
@@ -346,15 +340,18 @@ gossip topic.
 
 ### 9.2 Provider records
 
-A node that holds a video advertises it by calling Kademlia `start_providing`
-with the video CID's **binary form** as the key. A node looking for content
-calls `get_providers` with the same key, and SHOULD also try peers it is
-already connected to: on a small or new network the DHT may not have the
-record yet.
+A node that holds a **manifest** advertises it by calling Kademlia
+`start_providing` with the manifest CID's binary form as the key. A node looking
+for a manifest calls `get_providers` with the same key, and SHOULD also try
+peers it is already connected to: on a small or new network the DHT may not have
+the record yet.
+
+A provider record says nothing about who holds the video. Nobody does.
 
 ### 9.3 Block transfer
 
-A request-response protocol over `/ovn/chunk/1.0.0`, CBOR encoded.
+A request-response protocol over `/ovn/chunk/1.0.0`, CBOR encoded, carrying
+**manifests and thumbnails**. Video bytes do not travel this way.
 
 Request:
 
@@ -371,16 +368,34 @@ Response, a tagged union on `status`:
 ```
 
 `Refused` means the peer could serve it but chose not to — a rate limit, or
-content it has blocked locally.
+something it has blocked locally.
 
 The requester MUST hash the returned bytes and compare against the requested
-CID. Bytes that do not match MUST be discarded and MUST NOT be stored or
-served on. A peer that does this repeatedly SHOULD be deprioritised.
+CID. Bytes that do not match MUST be discarded and MUST NOT be stored or served
+on.
 
-The same protocol serves manifests and chunks: a manifest is just a block
-whose CID uses the `dag-cbor` codec.
+### 9.4 Fetching the video
 
----
+Over ordinary HTTP, from `sourceUrl`, with a `Range` header per chunk.
+
+A client MUST:
+
+1. refuse a `sourceUrl` whose scheme is neither `https` nor `http`;
+2. refuse one whose host is a **literal** loopback, private, link-local or
+   unspecified address, unless its operator has asked for that explicitly — a
+   node fetches whatever address an announcement names, and without this an
+   announcement is a way to make strangers' nodes probe their own networks. A
+   hostname that *resolves* to such an address is not caught by this, which
+   §13 states rather than pretends away;
+3. apply the same check to every hop of a redirect, not only to the signed URL;
+4. verify each chunk against the manifest before passing any of it on, and
+   abandon the response if it does not match;
+5. refuse a server that answers `200` with the whole file to a narrow `Range`,
+   rather than read a whole video into memory to find a megabyte of it.
+
+A server SHOULD answer `206 Partial Content` with `Accept-Ranges: bytes`. A
+server that cannot do ranges can still be downloaded from in one piece, but
+cannot be streamed from.
 
 ## 10. Joining from a URL or a link
 

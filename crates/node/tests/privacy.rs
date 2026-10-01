@@ -138,6 +138,7 @@ async fn watching_intensively_tells_the_other_peer_nothing() {
                     Some(name.to_string()),
                     String::new(),
                     vec![tag.to_string()],
+                    "https://videos.example/clip.mp4".to_string(),
                 )
                 .await
                 .unwrap();
@@ -245,6 +246,9 @@ async fn watching_intensively_tells_the_other_peer_nothing() {
         "isLocal",
         "haveManifest",
         "haveContent",
+        // Signed by the creator and the whole point of an announcement now:
+        // where the file is served from. Public by construction.
+        "sourceUrl",
     ]
     .into_iter()
     .collect();
@@ -337,7 +341,13 @@ async fn erasing_local_history_actually_erases_it() {
     let source = write_sample_file(node.dir.path(), "v.mp4", 4096);
     let report = node
         .node()
-        .publish_video(&source, Some("v".into()), String::new(), vec!["tag".into()])
+        .publish_video(
+            &source,
+            Some("v".into()),
+            String::new(),
+            vec!["tag".into()],
+            "https://videos.example/clip.mp4".to_string(),
+        )
         .await
         .unwrap();
     let cid = ContentId::parse(&report.video.cid).unwrap();

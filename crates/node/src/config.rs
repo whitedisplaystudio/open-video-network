@@ -64,6 +64,19 @@ pub struct NodeConfig {
     /// Address the local API binds to. Loopback by default: this API can read
     /// watch history, so it must not be reachable from the network.
     pub api_addr: SocketAddr,
+    /// Fetch from source URLs that point inside a network, not out at the
+    /// internet.
+    ///
+    /// Off by default. A node fetches a stranger's URL because an
+    /// announcement said to, so without this a published
+    /// `http://192.168.0.1/` would make every viewer's node knock on doors
+    /// inside their own house.
+    ///
+    /// Turning it on is for the case it exists for: a creator serving from a
+    /// machine on the same network as the people watching. It also re-opens
+    /// what it was closing, which is why it is a decision and not a default.
+    pub allow_private_sources: bool,
+
     /// Start the local HTTP API at all.
     pub enable_api: bool,
     /// Whether the local API requires its token.
@@ -86,6 +99,7 @@ impl NodeConfig {
             data_dir: data_dir.into(),
             node_name: default_node_name(),
             api_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DEFAULT_API_PORT),
+            allow_private_sources: false,
             enable_api: true,
             api_auth: ApiAuth::default(),
             network: NetworkConfig::default(),

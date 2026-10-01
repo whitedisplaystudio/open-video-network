@@ -98,6 +98,7 @@ async fn a_network_left_running_stays_healthy() {
                 Some(format!("Round {round}")),
                 "A soak test clip.".into(),
                 vec![if round % 2 == 0 { "gaming" } else { "music" }.into()],
+                "https://videos.example/clip.mp4".to_string(),
             )
             .await
             .expect("publishing should keep working");
@@ -269,33 +270,28 @@ async fn a_node_survives_peers_arriving_and_leaving_repeatedly() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "runs for minutes; see the module comment"]
 async fn a_small_cache_evicts_forever_without_losing_what_it_should_keep() {
-    // The other soak runs never come close to filling a 10 GiB cache, so
-    // eviction only ever gets exercised by unit tests. Here the ceiling is
-    // small enough that every round pushes something out, for as long as the
-    // run lasts.
-    const LIMIT: u64 = 8 * 1024 * 1024;
+    // A node holds manifests and thumbnails, not video, so a cache fills far
+    // more slowly than it used to — but it still fills, and eviction still has
+    // to spare what was pinned. The ceiling here is small enough that every
+    // round pushes something out, for as long as the run lasts.
+    const LIMIT: u64 = 256 * 1024;
 
     let publisher = spawn_node("publisher").await;
     let viewer = spawn_node_with("viewer", |config| {
         config.storage.cache_limit_bytes = LIMIT;
+        config.allow_private_sources = true;
     })
     .await;
     join_via_share_link(&viewer, &publisher).await;
 
-    // Something the viewer published itself. It is pinned, and must survive
-    // however much pressure the cache comes under.
+    // Something the viewer published itself. Its manifest is pinned, and must
+    // survive however much pressure the cache comes under.
     let precious_source = write_seeded_file(viewer.dir.path(), "mine.mp4", 512 * 1024, 0xABCD);
-    let precious = viewer
-        .node()
-        .publish_video(&precious_source, Some("Mine".into()), String::new(), vec![])
-        .await
-        .unwrap();
-    let precious_cid = ContentId::parse(&precious.video.cid).unwrap();
-    let precious_manifest = viewer.node().manifest(&precious_cid).unwrap().unwrap();
+    let precious_cid = publish_until_announced(viewer.node(), &precious_source, "Mine", &[]).await;
 
     let deadline = Instant::now() + Duration::from_secs(soak_seconds());
     let mut round = 0u32;
-    let mut evicted_total = 0u64;
+    let mut watched = 0u32;
 
     while Instant::now() < deadline {
         round += 1;
@@ -305,25 +301,19 @@ async fn a_small_cache_evicts_forever_without_losing_what_it_should_keep() {
             1024 * 1024 + 7,
             round as u64,
         );
-        let report = publisher
-            .node()
-            .publish_video(
-                &source,
-                Some(format!("Round {round}")),
-                String::new(),
-                vec![],
-            )
-            .await
-            .expect("publishing should keep working");
-        let _ = std::fs::remove_file(&source);
-        let cid = ContentId::parse(&report.video.cid).unwrap();
+        let origin = OriginServer::serving(std::fs::read(&source).unwrap()).await;
+        let cid = publish_until_announced_from(
+            publisher.node(),
+            &source,
+            &format!("Clip {round}"),
+            &[],
+            &origin.base_url,
+        )
+        .await;
 
         let viewer_node = viewer.node().clone();
-        if wait_until(Duration::from_secs(30), || {
-            viewer_node
-                .video(&cid)
-                .map(|v| v.is_some())
-                .unwrap_or(false)
+        if wait_until(Duration::from_secs(10), || {
+            viewer_node.video(&cid).ok().flatten().is_some()
         })
         .await
         .is_err()
@@ -331,9 +321,12 @@ async fn a_small_cache_evicts_forever_without_losing_what_it_should_keep() {
             continue;
         }
 
-        if let Ok(fetched) = viewer.node().fetch_video(cid).await {
-            evicted_total += fetched.eviction.bytes_freed;
+        // Watching pulls the manifest and the thumbnail in, which is what
+        // accumulates.
+        if viewer.node().prepare_stream(cid).await.is_ok() {
+            watched += 1;
         }
+        viewer.node().storage().enforce_limit().ok();
 
         // The ceiling is a ceiling, not a target to drift past.
         let usage = viewer.node().storage().usage().unwrap();
@@ -343,35 +336,32 @@ async fn a_small_cache_evicts_forever_without_losing_what_it_should_keep() {
             "round {round}: {unpinned} unpinned bytes over a {LIMIT} byte ceiling"
         );
 
-        if round % 10 == 0 {
+        if round % 25 == 0 {
             eprintln!(
-                "round {round}: cache {} KB ({} KB pinned), {} MB evicted so far, rss {:?} MB",
+                "round {round}: cache {} KB ({} KB pinned), {watched} watched, rss {:?} MB",
                 usage.total_bytes / 1024,
                 usage.pinned_bytes / 1024,
-                evicted_total / 1024 / 1024,
                 resident_bytes().map(|b| b / 1024 / 1024),
             );
         }
     }
 
     assert!(
-        evicted_total > 0,
-        "nothing was ever evicted, so nothing was actually tested"
+        watched > 0,
+        "nothing was ever watched, so nothing was tested"
     );
 
     // What this node published came through all of it intact.
-    for chunk in &precious_manifest.chunks {
-        assert!(
-            viewer.node().storage().has(chunk),
-            "a pinned chunk was evicted under pressure"
-        );
-    }
-    assert!(viewer.node().export_video(precious_cid, None).is_ok());
-
-    eprintln!(
-        "eviction soak finished: {round} rounds, {} MB evicted",
-        evicted_total / 1024 / 1024
+    assert!(
+        viewer.node().storage().has(&precious_cid),
+        "a pinned manifest was evicted under pressure"
     );
+    assert!(
+        viewer.node().prepare_stream(precious_cid).await.is_ok(),
+        "our own video stopped being playable"
+    );
+
+    eprintln!("eviction soak finished: {round} rounds, {watched} watched");
 
     publisher.shutdown().await;
     viewer.shutdown().await;

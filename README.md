@@ -35,6 +35,33 @@ from:
    multiaddr, a CID or a public key. Starting a node is one command. Joining a
    network is one link.
 
+### How a video gets to you
+
+**The network carries what is needed to find a video and to check it. It does
+not carry the video.**
+
+An announcement is metadata — title, tags, thumbnail, the creator's signature —
+plus a `sourceUrl`, and the id of a *manifest* that lists what every 1 MiB chunk
+of the file must hash to. Announcements spread peer to peer; so do manifests and
+thumbnails, because they are small and because a feed that cannot draw itself
+until somebody's server answers is a feed that waits on somebody's uptime.
+
+The file itself is fetched over ordinary HTTPS from `sourceUrl`, a chunk at a
+time, and **every chunk is checked against the manifest before any of it reaches
+the player**. That is what the hashes are for now: not addresses, but a promise
+the creator signed about what the bytes must be. A server that is swapped,
+compromised, or told to serve one viewer something different cannot do it
+unnoticed.
+
+So: **publishing needs somewhere to serve from.** You give `--source-url` when
+you publish, and that address is inside your signature, so nobody relaying your
+announcement can point viewers elsewhere.
+
+And: **watching does not make you a distributor.** Your node keeps the manifest
+and the thumbnail. It never holds or serves anyone else's video. The cost of
+that is in [`docs/PRIVACY.md`](docs/PRIVACY.md) — the creator's server sees your
+IP, as any website does — and the trade is spelled out there rather than hidden.
+
 ---
 
 ## Quickstart
@@ -164,10 +191,10 @@ ourvideo recommendation explain <CID>
 | `ourvideo peer list` | Known peers and how you met them. |
 | `ourvideo peer add <URL-or-link>` | Join through a URL, an `ourvideo://` link, or a multiaddr. |
 | `ourvideo peer remove <PEER_ID>` | Forget a peer. |
-| `ourvideo video publish <FILE>` | Chunk, address, sign and announce a file. |
+| `ourvideo video publish <FILE> --source-url <URL>` | Hash and sign a file, and announce where it is served from. |
 | `ourvideo video list [--local]` | Discovered videos, or only yours. |
 | `ourvideo video info <CID>` | Everything known about one video. |
-| `ourvideo video get <CID> [--out PATH]` | Fetch the data and write a playable file. |
+| `ourvideo video get <CID>` | Fetch from the creator's server, verifying, and write a playable file. |
 | `ourvideo search <QUERY>` | Full-text search over discovered metadata, locally. |
 | `ourvideo recommendation list` | Your feed. |
 | `ourvideo recommendation explain <CID>` | The exact terms that produced a score. |
@@ -309,7 +336,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4801/v1/status | jq
 | `GET /v1/videos/{cid}` | One video. |
 | `POST /v1/videos/{cid}/fetch` | Fetch its blocks from the network. |
 | `POST /v1/videos/{cid}/export` | Write a playable file. |
-| `GET`/`HEAD` `/v1/videos/{cid}/stream` | Play it. Honours `Range`; chunks are fetched a few ahead of the player. |
+| `GET`/`HEAD` `/v1/videos/{cid}/stream` | Play it. Honours `Range`; chunks are fetched from the creator's server a few ahead of the player, and verified. |
 | `GET /v1/videos/{cid}/thumbnail` | Its thumbnail, fetched from a peer if needed. |
 | `POST /v1/upload?fileName=…&title=…&tags=…` | Publish a file sent as the request body. |
 | `GET /v1/events` | Server-sent events: peers, discoveries, download progress. |
@@ -613,9 +640,10 @@ check. See [`docs/SECURITY.md`](docs/SECURITY.md).
 
 These are deliberate, and listed in the design document rather than hidden:
 
-* **Videos are not guaranteed to survive.** If the creator goes offline and
-  every cache has evicted a video, it is gone. Persistent and NAS nodes are a
-  V1.5 candidate.
+* **A video lasts as long as its server does.** If the creator takes their
+  server down, that video is gone — nobody else is holding it. The network
+  keeps the record that it existed, and nothing else. This is the direct cost
+  of not asking every viewer to store and serve other people's video.
 * **No transcoding and no adaptive streaming.** The original file is what is
   distributed.
 * **No adaptive bitrate.** The web player streams the original file; there is

@@ -216,34 +216,33 @@ browser willing to scrub through a video rather than download it first.
 
 ```
 Range: bytes=1048570-2097160
- └─ resolve the manifest (fetching it if we lack it)
+ └─ resolve the manifest (from a peer if we lack it)
      └─ work out which chunks the range touches
-         └─ keep four of them in flight at once:
-             ├─ held locally?  read it
-             └─ otherwise      fetch it from a provider, verify, store
+         └─ keep four of them in flight to the creator's server:
+             ├─ GET sourceUrl with Range: bytes=…   (one chunk)
+             └─ hash it; refuse the whole response if it does not match
          └─ hand them to the player in order, trimming
             the first and last to the requested bytes
 ```
 
-Chunks are produced in order but fetched several at a time. Fetching them one
-at a time meant the request for chunk N+1 only started once chunk N had been
-handed over, so a remote video paid a full round trip per megabyte with
-nothing overlapping — 16 MiB over loopback, where a round trip costs almost
-nothing, still took 557 ms that way against 386 ms with a window of four. On a
-real link the gap is the round-trip time multiplied by the number of chunks.
+Two different sources, deliberately. The **manifest** comes from the network —
+it is small, and it is what makes everything else checkable. The **bytes** come
+from `sourceUrl`, which is the creator's own server.
 
-The window costs memory: at most four chunks per active stream. The local API
-is loopback-only, so the number of active streams is however many tabs one
-person has open. Dropping the response — a seek, a closed tab — aborts
-whatever was still being fetched for it, so a scrub through a video does not
-leave a trail of transfers nobody wants.
+The verification is the point. A chunk hash is no longer an address; nobody asks
+a peer for a chunk. It is a promise, signed by the creator, about what the bytes
+at a given offset must be. A server that is swapped, compromised, or told to
+serve one viewer something different cannot do it without that viewer noticing,
+and nothing that fails the check reaches the player.
 
-Providers are resolved once, before the response starts, and the answer is
-reused for 30 seconds. A player seeking issues a Range request per seek, and
-each one used to start its own DHT query; which peers hold a video does not
-change that fast. A range that fails against every provider drops the cached
-answer, so the next attempt asks the network again rather than retrying a list
-that just failed.
+Chunks are produced in order but fetched four at a time, so a chunk's round trip
+to the server is already paid for by the time the player needs it. Dropping the
+response — a seek, a closed tab — abandons what was in flight rather than
+spending somebody's bandwidth on bytes nobody wants.
+
+A node holds no video. Watching something leaves the manifest and the thumbnail
+behind, and that is all; `ourvideo video get` is how you keep a copy, and it
+writes it to the downloads folder.
 
 The `Content-Type` comes from a manifest a stranger wrote, so it is matched
 against an allowlist of media types; anything unrecognised is served as

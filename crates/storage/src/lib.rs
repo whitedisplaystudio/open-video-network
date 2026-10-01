@@ -133,7 +133,27 @@ impl Storage {
         Ok(())
     }
 
-    /// Import a file this node is publishing. Every block is pinned.
+    /// Hash a file this node is publishing, and keep the manifest.
+    ///
+    /// The file itself is not stored: the network carries what is needed to
+    /// find and check a video, and the bytes come from the creator's own
+    /// server. The manifest is pinned because without it nobody can check
+    /// those bytes against what was announced.
+    pub fn publish_manifest(&self, path: impl AsRef<Path>) -> Result<ImportedVideo> {
+        let imported = self.store.manifest_for_file(path)?;
+        self.db.record_cached(
+            &imported.content_id,
+            imported.manifest_bytes.len() as u64,
+            true,
+        )?;
+        Ok(imported)
+    }
+
+    /// Import a file and store every chunk, pinned.
+    ///
+    /// Not used for publishing any more. Kept because a manifest is still a
+    /// block, and because a test that wants a node to genuinely hold content
+    /// needs a way to say so.
     pub fn import_and_pin(&self, path: impl AsRef<Path>) -> Result<ImportedVideo> {
         let imported = self.store.import_file(path)?;
         for chunk in &imported.manifest.chunks {

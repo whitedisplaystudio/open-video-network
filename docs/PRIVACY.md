@@ -103,6 +103,29 @@ only with the API token.
 
 Doing it by hand is the point. A derive would make the next one invisible.
 
+## What the creator's server sees
+
+This one is a cost, and it is new.
+
+Video files are served from the creator's own server. Your node fetches them,
+so **that server learns your IP address, and that you watched, and roughly
+when** — the same as any website you visit. It is in their logs, and this
+project cannot do anything about what they keep.
+
+Under the earlier design, where the bytes came from whoever happened to have
+them, a creator could not tell who had watched. That is no longer true, and it
+is the price of not asking every viewer to store and redistribute other
+people's video.
+
+What has not changed: **which** videos you choose to watch, how long you
+watched, what you liked, who you subscribe to and what gets recommended to you
+all stay on your device. A creator can see that somebody fetched one file. No
+part of this system assembles that into a picture of a person, and there is no
+message for sending one.
+
+If that matters for a particular video, a VPN or Tor does the same job here as
+it does for the rest of the web, because the fetch is an ordinary HTTPS request.
+
 ## What the network does see
 
 Running a node is not anonymous, and pretending otherwise would be worse than

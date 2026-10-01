@@ -214,9 +214,15 @@ function wireUpload() {
       toast(t('admin.publish.noFile'), 'error');
       return;
     }
+    const sourceUrl = $('upload-source').value.trim();
+    if (!sourceUrl) {
+      toast(t('admin.publish.noSourceUrl'), 'error');
+      return;
+    }
 
     const params = new URLSearchParams({
       fileName: file.name,
+      sourceUrl,
       title: $('upload-title').value,
       description: $('upload-description').value,
       tags: $('upload-tags').value,
@@ -228,8 +234,10 @@ function wireUpload() {
     $('upload-meter').style.setProperty('--value', '5');
 
     try {
-      // The body is streamed to disk on the node, then chunked into the
-      // block store, so a large file never has to fit in memory anywhere.
+      // The file is streamed to the node so it can be hashed and a thumbnail
+      // taken from it; the bytes are then discarded. What the network gets is
+      // the metadata and the hashes, and viewers fetch the file itself from
+      // the URL above.
       const result = await api(`/v1/upload?${params}`, {
         method: 'POST',
         body: file,
@@ -240,6 +248,7 @@ function wireUpload() {
       toast(t(result.announcedToNetwork ? 'admin.publish.done' : 'admin.publish.doneNoPeers',
         { title: result.title }));
       input.value = '';
+      $('upload-source').value = '';
       $('upload-title').value = '';
       $('upload-description').value = '';
       $('upload-tags').value = '';

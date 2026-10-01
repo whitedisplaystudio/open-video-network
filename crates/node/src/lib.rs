@@ -20,6 +20,7 @@ mod dto;
 mod events;
 mod i18n;
 mod node;
+mod origin;
 mod progress;
 mod range;
 
@@ -42,6 +43,15 @@ pub use range::{parse_range, ByteRange, RangeError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum NodeError {
+    #[error("{0} was announced without anywhere to fetch it from")]
+    NoSource(String),
+    #[error("could not fetch from {url}: {reason}")]
+    Origin { url: String, reason: String },
+    #[error(
+        "{url} served bytes that do not match what the creator signed for {cid}; \
+         the file there is not the file that was announced"
+    )]
+    OriginTampered { url: String, cid: String },
     #[error(
         "that is a channel link, not a node link. Subscribe to it with \
          `ourvideo channel subscribe`"

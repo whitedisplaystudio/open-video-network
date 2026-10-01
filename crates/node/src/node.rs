@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
 use libp2p::Multiaddr;
 
 use ovn_content::{
@@ -29,10 +28,6 @@ use crate::config::{NodeConfig, RuntimeInfo};
 use crate::progress::{EventBus, NodeEvent};
 use crate::range::ByteRange;
 use crate::{NodeError, Result};
-
-/// How many chunk transfers run at once. Enough to hide the round trip
-/// without turning one downloading node into a burst of load on a provider.
-const CONCURRENT_CHUNK_FETCHES: usize = 4;
 
 /// How many chunks to have in flight ahead of the one being written to the
 /// player.
@@ -84,6 +79,9 @@ pub(crate) struct Inner {
     pub events: EventBus,
     /// Which peers were found to hold a video, and when we asked.
     providers: Mutex<HashMap<ContentId, (Vec<PeerId>, Instant)>>,
+    /// Fetches video bytes from creators' own servers, and refuses anything
+    /// that does not match what they signed.
+    origin: crate::origin::Origin,
 }
 
 /// A handle to a running node. Cheap to clone.
@@ -139,8 +137,9 @@ impl StreamState {
             };
             let node = self.node.clone();
             let plan = Arc::clone(&self.plan);
+            let index = self.next_to_fetch;
             self.ahead.tasks.push_back(tokio::spawn(async move {
-                node.block_for_stream(cid, &plan.providers)
+                node.chunk_for_stream(cid, &plan, index)
                     .await
                     .map_err(|e| std::io::Error::other(e.to_string()))
             }));
@@ -149,12 +148,7 @@ impl StreamState {
     }
 
     /// Abandon the rest of the response after an error.
-    ///
-    /// The providers we were given could not serve this, so the next request
-    /// for the same video should ask the network again rather than reuse the
-    /// list that just failed.
     fn give_up(mut self) -> Self {
-        self.node.forget_providers(&self.plan.cid);
         self.ahead.tasks.clear();
         self.next_to_emit = self.last.saturating_add(1);
         self
@@ -202,7 +196,10 @@ pub struct FetchReport {
     pub chunks_fetched: usize,
     pub chunks_already_held: usize,
     pub bytes_fetched: u64,
-    pub providers_tried: usize,
+    /// Where the bytes came from.
+    pub source_url: String,
+    /// Where the file was written.
+    pub path: PathBuf,
     pub eviction: EvictionReport,
 }
 
@@ -214,8 +211,9 @@ pub struct StreamPlan {
     pub manifest: VideoManifest,
     pub media_type: String,
     pub total_size: u64,
-    /// Peers to ask for chunks we do not hold. Empty when we hold them all.
-    pub providers: Vec<PeerId>,
+    /// Where the bytes come from. Every chunk fetched from here is checked
+    /// against `manifest` before any of it is passed on.
+    pub source_url: String,
 }
 
 /// The result of `peer add`.
@@ -715,13 +713,19 @@ impl Node {
 
     // ----------------------------------------------------------- publishing
 
-    /// `ourvideo video publish <FILE>`.
+    /// `ourvideo video publish <FILE> --source-url <URL>`.
+    ///
+    /// The file is read to hash it and to take a thumbnail, and then left
+    /// alone. What goes onto the network is the metadata, the thumbnail, and
+    /// the manifest that says what the bytes must hash to; the bytes
+    /// themselves are served from `source_url`.
     pub async fn publish_video(
         &self,
         path: impl AsRef<Path>,
         title: Option<String>,
         description: String,
         tags: Vec<String>,
+        source_url: String,
     ) -> Result<PublishReport> {
         let path = path.as_ref();
         if !path.is_file() {
@@ -735,7 +739,8 @@ impl Node {
             file_name: file_name.clone(),
         });
 
-        let imported = self.inner.storage.import_and_pin(path)?;
+        ovn_protocol::check_source_url(&source_url)?;
+        let imported = self.inner.storage.publish_manifest(path)?;
         let duration_secs = probe_duration_secs(path).unwrap_or(0);
         let thumbnail_cid = self.make_thumbnail(path);
         let title = title.unwrap_or_else(|| {
@@ -752,6 +757,7 @@ impl Node {
                 tags,
                 duration_secs,
                 thumbnail_cid,
+                source_url,
             },
             &self.inner.identity,
         )?;
@@ -765,16 +771,18 @@ impl Node {
         self.inner
             .db
             .set_have_manifest(&imported.content_id, true)?;
-        self.inner.db.set_have_content(&imported.content_id, true)?;
+        // Deliberately not `set_have_content`: this node holds the manifest
+        // and the thumbnail, and does not hold the video.
 
-        // Tell the DHT we hold it, then gossip the metadata.
+        // Provider records are for the manifest, which this node does hold and
+        // does serve. They are no longer a claim about the video itself.
         if let Err(e) = self
             .inner
             .network
             .start_providing(imported.content_id)
             .await
         {
-            tracing::warn!(error = %e, "could not announce as a provider");
+            tracing::warn!(error = %e, "could not announce as a provider of the manifest");
         }
         // And that we can answer for this channel, which is how a subscriber
         // finds this video without having been connected when it was
@@ -827,31 +835,35 @@ impl Node {
     // ------------------------------------------------------------ fetching
 
     /// Fetch a video's manifest and every chunk it needs.
+    /// `ourvideo video get <CID>` — write a playable file to disk.
+    ///
+    /// The manifest comes from the network; the bytes come from the creator's
+    /// server, and every chunk of them is checked against the manifest before
+    /// it is written. A file that does not match what was announced is not
+    /// written at all.
     pub async fn fetch_video(&self, cid: ContentId) -> Result<FetchReport> {
         if self.inner.db.is_cid_blocked(&cid)? {
             return Err(NodeError::Blocked(cid.to_string()));
         }
-        let providers = self.providers_for(cid).await?;
-        if providers.is_empty() {
-            return Err(NodeError::NoProviders(cid.to_string()));
-        }
+        let record = self.inner.db.video(&cid)?.ok_or(NodeError::NotFound)?;
+        let manifest = self.manifest_for(cid).await?;
 
-        let manifest = self.fetch_manifest(cid, &providers).await?;
-        self.inner.db.set_have_manifest(&cid, true)?;
-
-        let missing = self.inner.storage.store().missing_chunks(&manifest);
-        let already_held = manifest.chunks.len() - missing.len();
         self.emit(NodeEvent::FetchStarted {
             cid: cid.to_string(),
             total_chunks: manifest.chunks.len(),
-            already_held,
+            already_held: 0,
         });
 
-        let fetched = match self
-            .fetch_chunks(cid, &missing, &providers, already_held)
+        let out = self
+            .inner
+            .config
+            .downloads_dir()
+            .join(sanitise_file_name(&manifest.file_name));
+        let bytes_fetched = match self
+            .download_verified(&record.source_url, &manifest, &out, cid)
             .await
         {
-            Ok(fetched) => fetched,
+            Ok(bytes) => bytes,
             Err(e) => {
                 self.emit(NodeEvent::FetchFailed {
                     cid: cid.to_string(),
@@ -860,27 +872,99 @@ impl Node {
                 return Err(e);
             }
         };
-        let bytes_fetched = fetched.iter().sum::<u64>();
         self.emit(NodeEvent::FetchCompleted {
             cid: cid.to_string(),
             bytes_fetched,
         });
 
-        if self.inner.storage.store().has_all_chunks(&manifest) {
-            self.inner.db.set_have_content(&cid, true)?;
-            // Now that we hold it, offer it to others.
-            let _ = self.inner.network.start_providing(cid).await;
-        }
-
-        let eviction = self.inner.storage.enforce_limit()?;
         Ok(FetchReport {
             cid,
-            chunks_fetched: fetched.len(),
-            chunks_already_held: already_held,
+            chunks_fetched: manifest.chunks.len(),
+            chunks_already_held: 0,
             bytes_fetched,
-            providers_tried: providers.len(),
-            eviction,
+            source_url: record.source_url,
+            path: out,
+            // Nothing was added to the cache, so nothing was evicted from it.
+            eviction: EvictionReport::default(),
         })
+    }
+
+    /// Write a whole video out, chunk by chunk, reporting progress.
+    ///
+    /// The loop lives here rather than in the fetcher so that each chunk can be
+    /// announced as it lands: the progress bar in the web interface is driven
+    /// by these events, and a download that reports nothing until it finishes
+    /// looks indistinguishable from one that has stalled.
+    async fn download_verified(
+        &self,
+        source_url: &str,
+        manifest: &VideoManifest,
+        out: &Path,
+        cid: ContentId,
+    ) -> Result<u64> {
+        use std::io::Write;
+
+        if let Some(parent) = out.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| NodeError::Origin {
+                    url: source_url.to_string(),
+                    reason: format!("cannot create {}: {e}", parent.display()),
+                })?;
+            }
+        }
+        // Written under a temporary name and renamed, so an interrupted
+        // download never leaves a short file looking like a whole one.
+        let temp = out.with_extension("ovn-partial");
+        let mut file = std::fs::File::create(&temp).map_err(|e| NodeError::Origin {
+            url: source_url.to_string(),
+            reason: format!("cannot write {}: {e}", temp.display()),
+        })?;
+
+        let mut written = 0u64;
+        for index in 0..manifest.chunks.len() {
+            let bytes = match self.inner.origin.chunk(source_url, manifest, index).await {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&temp);
+                    return Err(e);
+                }
+            };
+            file.write_all(&bytes).map_err(|e| NodeError::Origin {
+                url: source_url.to_string(),
+                reason: format!("cannot write {}: {e}", temp.display()),
+            })?;
+            written += bytes.len() as u64;
+            self.emit(NodeEvent::FetchProgress {
+                cid: cid.to_string(),
+                completed_chunks: index + 1,
+                total_chunks: manifest.chunks.len(),
+                bytes_fetched: written,
+            });
+        }
+        drop(file);
+        std::fs::rename(&temp, out).map_err(|e| NodeError::Origin {
+            url: source_url.to_string(),
+            reason: format!("cannot rename into {}: {e}", out.display()),
+        })?;
+        Ok(written)
+    }
+
+    /// The manifest for a video: ours if we have it, otherwise from a peer.
+    ///
+    /// Manifests still travel peer to peer. They are small, they are what
+    /// makes the bytes checkable, and a video nobody can find the manifest for
+    /// cannot be watched however reachable its server is.
+    async fn manifest_for(&self, cid: ContentId) -> Result<VideoManifest> {
+        if let Some(manifest) = self.manifest(&cid)? {
+            return Ok(manifest);
+        }
+        let providers = self.providers_for(cid).await?;
+        if providers.is_empty() {
+            return Err(NodeError::NoProviders(cid.to_string()));
+        }
+        let manifest = self.fetch_manifest(cid, &providers).await?;
+        self.inner.db.set_have_manifest(&cid, true)?;
+        Ok(manifest)
     }
 
     async fn providers_for(&self, cid: ContentId) -> Result<Vec<PeerId>> {
@@ -927,13 +1011,6 @@ impl Node {
         cache.insert(cid, (peers.to_vec(), Instant::now()));
     }
 
-    /// Forget what we were told about `cid` after nobody there could serve it.
-    fn forget_providers(&self, cid: &ContentId) {
-        if let Ok(mut cache) = self.inner.providers.lock() {
-            cache.remove(cid);
-        }
-    }
-
     async fn fetch_manifest(&self, cid: ContentId, providers: &[PeerId]) -> Result<VideoManifest> {
         if let Some(bytes) = self.inner.storage.try_get(&cid)? {
             return Ok(VideoManifest::from_bytes(&bytes)?);
@@ -965,60 +1042,6 @@ impl Node {
             cid: cid.to_string(),
             reason: last_error.unwrap_or_else(|| "no provider answered".to_string()),
         })
-    }
-
-    async fn fetch_chunks(
-        &self,
-        video: ContentId,
-        missing: &[ContentId],
-        providers: &[PeerId],
-        already_held: usize,
-    ) -> Result<Vec<u64>> {
-        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-
-        let total_chunks = already_held + missing.len();
-        let done = AtomicUsize::new(already_held);
-        let bytes = AtomicU64::new(0);
-        let (done, bytes) = (&done, &bytes);
-
-        let results: Vec<Result<u64>> = futures::stream::iter(missing.iter().copied())
-            .map(|cid| async move {
-                let data = self.fetch_block(cid, providers).await?;
-                let len = data.len() as u64;
-                // Chunks finish out of order, so report a count rather than
-                // an index: a progress bar only needs "how many of how many".
-                let completed = done.fetch_add(1, Ordering::Relaxed) + 1;
-                let so_far = bytes.fetch_add(len, Ordering::Relaxed) + len;
-                self.emit(NodeEvent::FetchProgress {
-                    cid: video.to_string(),
-                    completed_chunks: completed,
-                    total_chunks,
-                    bytes_fetched: so_far,
-                });
-                Ok(len)
-            })
-            .buffer_unordered(CONCURRENT_CHUNK_FETCHES)
-            .collect()
-            .await;
-        results.into_iter().collect()
-    }
-
-    /// Write a fetched video back out as a playable file.
-    pub fn export_video(&self, cid: ContentId, out_path: Option<PathBuf>) -> Result<PathBuf> {
-        let bytes = self
-            .inner
-            .storage
-            .try_get(&cid)?
-            .ok_or(NodeError::NotFetched(cid.to_string()))?;
-        let manifest = VideoManifest::from_bytes(&bytes)?;
-        let out_path = out_path.unwrap_or_else(|| {
-            self.inner
-                .config
-                .downloads_dir()
-                .join(sanitise_file_name(&manifest.file_name))
-        });
-        self.inner.storage.assemble(&manifest, &out_path)?;
-        Ok(out_path)
     }
 
     pub fn manifest(&self, cid: &ContentId) -> Result<Option<VideoManifest>> {
@@ -1091,30 +1114,17 @@ impl Node {
         if self.inner.db.is_cid_blocked(&cid)? {
             return Err(NodeError::Blocked(cid.to_string()));
         }
-        let manifest = match self.manifest(&cid)? {
-            Some(manifest) => manifest,
-            None => {
-                let providers = self.providers_for(cid).await?;
-                if providers.is_empty() {
-                    return Err(NodeError::NoProviders(cid.to_string()));
-                }
-                let manifest = self.fetch_manifest(cid, &providers).await?;
-                self.inner.db.set_have_manifest(&cid, true)?;
-                manifest
-            }
-        };
-        // Resolved once, then reused for every chunk in the response.
-        let providers = if self.inner.storage.store().has_all_chunks(&manifest) {
-            Vec::new()
-        } else {
-            self.providers_for(cid).await?
-        };
+        let record = self.inner.db.video(&cid)?.ok_or(NodeError::NotFound)?;
+        if record.source_url.is_empty() {
+            return Err(NodeError::NoSource(cid.to_string()));
+        }
+        let manifest = self.manifest_for(cid).await?;
         Ok(StreamPlan {
             cid,
             media_type: manifest.media_type.clone(),
             total_size: manifest.total_size,
             manifest,
-            providers,
+            source_url: record.source_url,
         })
     }
 
@@ -1172,14 +1182,25 @@ impl Node {
         })
     }
 
-    async fn block_for_stream(&self, cid: ContentId, providers: &[PeerId]) -> Result<Vec<u8>> {
+    /// One chunk of a video, for a streaming response.
+    ///
+    /// A node may already hold this block — it holds the manifests and
+    /// thumbnails it serves, and a test may have put content in deliberately —
+    /// so the local store is asked first. Otherwise it comes from the
+    /// creator's server, checked against the manifest on the way through.
+    async fn chunk_for_stream(
+        &self,
+        cid: ContentId,
+        plan: &StreamPlan,
+        index: usize,
+    ) -> Result<Vec<u8>> {
         if let Some(data) = self.inner.storage.try_get(&cid)? {
             return Ok(data);
         }
-        if providers.is_empty() {
-            return Err(NodeError::NoProviders(cid.to_string()));
-        }
-        self.fetch_block(cid, providers).await
+        self.inner
+            .origin
+            .chunk(&plan.source_url, &plan.manifest, index)
+            .await
     }
 
     // -------------------------------------------------------------- browse
@@ -1353,6 +1374,8 @@ impl Node {
 
     // -------------------------------------------------------------- status
 
+    // -------------------------------------------------------------- status
+
     pub async fn status(&self) -> Result<NodeStatus> {
         let network: NetworkStatus = self.inner.network.status().await?;
         let cache = self.inner.storage.usage()?;
@@ -1381,7 +1404,12 @@ impl Node {
         })
     }
 
-    /// Re-announce everything we hold, so a restarted node is findable again.
+    /// Tell the DHT which manifests this node holds.
+    ///
+    /// A provider record now means "I have the manifest for this video", not
+    /// "I have the video". It is what lets somebody who has heard of a video
+    /// find out what its bytes must hash to, which is the thing they need
+    /// before they can trust the file the creator's server hands them.
     pub async fn reprovide(&self) -> Result<usize> {
         let mut count = 0;
         let mut seen = HashSet::new();
@@ -1394,7 +1422,7 @@ impl Node {
             }
         }
         for video in self.inner.db.videos(512, 0)? {
-            if !video.have_content {
+            if !video.have_manifest {
                 continue;
             }
             let Ok(cid) = ContentId::parse(&video.cid) else {
@@ -1468,6 +1496,7 @@ pub(crate) fn build_inner(
         api_token,
         listen_addrs: Mutex::new(Vec::new()),
         providers: Mutex::new(HashMap::new()),
+        origin: crate::origin::Origin::new(config.allow_private_sources)?,
         config,
     }))
 }

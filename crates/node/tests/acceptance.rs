@@ -158,18 +158,28 @@ async fn test_c_a_hostile_link_cannot_impersonate_a_node() {
 // ---------------------------------------------------------------- Test D
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_d_a_published_video_is_discovered_and_fetched_over_p2p() {
+async fn test_d_a_published_video_is_discovered_over_p2p_and_fetched_from_its_source() {
     let a = spawn_node("publisher").await;
-    let b = spawn_node("viewer").await;
+    let b = spawn_node_fetching_locally("viewer").await;
     join_via_share_link(&b, &a).await;
 
-    // Two chunks and a bit, so reassembly order actually matters.
+    // Two chunks and a bit, so more than one round trip to the server is
+    // needed and the order they come back in matters.
     let source = write_sample_file(a.dir.path(), "clip.mp4", 2 * 1024 * 1024 + 4242);
     let original = std::fs::read(&source).unwrap();
+    let origin = OriginServer::serving(original.clone()).await;
 
-    let cid = publish_until_announced(a.node(), &source, "Kingdom speedrun", &["gaming"]).await;
+    let cid = publish_until_announced_from(
+        a.node(),
+        &source,
+        "Kingdom speedrun",
+        &["gaming"],
+        &origin.base_url,
+    )
+    .await;
 
-    // B learns about it through GossipSub, with no server involved.
+    // B learns that the video exists through GossipSub, with no server
+    // involved in the finding.
     let b_node = b.node().clone();
     wait_until(PROPAGATION_TIMEOUT, || {
         b_node.video(&cid).map(|v| v.is_some()).unwrap_or(false)
@@ -181,19 +191,26 @@ async fn test_d_a_published_video_is_discovered_and_fetched_over_p2p() {
     assert_eq!(discovered.title, "Kingdom speedrun");
     assert_eq!(discovered.tags, vec!["gaming"]);
     assert_eq!(discovered.creator, a.node().public_key().to_hex());
+    assert_eq!(discovered.source_url, origin.base_url);
     assert!(!discovered.have_content);
 
-    // And can fetch the bytes from A.
+    // And fetches the bytes from where the creator put them, checking every
+    // chunk against the manifest it heard about over the network.
     let report = b.node().fetch_video(cid).await.expect("fetching");
     assert_eq!(report.chunks_fetched, 3);
     assert_eq!(report.bytes_fetched, original.len() as u64);
+    assert_eq!(report.source_url, origin.base_url);
 
-    let out = b.dir.path().join("fetched.mp4");
-    let written = b.node().export_video(cid, Some(out.clone())).unwrap();
-    assert_eq!(std::fs::read(&written).unwrap(), original);
+    let written = b.node().config().downloads_dir().join("clip.mp4");
+    assert_eq!(
+        std::fs::read(&written).unwrap(),
+        original,
+        "the file written out must be the file that was announced"
+    );
 
-    // B now holds it and offers it on, which is how the network heals.
-    assert!(b.node().video(&cid).unwrap().unwrap().have_content);
+    // B holds the file it asked for, and is not holding the video on behalf of
+    // the network: what it passes on is the metadata, not the bytes.
+    assert!(!b.node().video(&cid).unwrap().unwrap().have_content);
 
     a.shutdown().await;
     b.shutdown().await;
@@ -291,6 +308,7 @@ async fn test_e_a_completely_forged_announcement_is_never_stored() {
             tags: vec!["gaming".into()],
             duration_secs: 60,
             thumbnail_cid: None,
+            source_url: "https://videos.example/clip.mp4".to_string(),
         },
         &victim,
     )
@@ -400,7 +418,7 @@ async fn test_h_the_network_survives_losing_the_node_everyone_joined_through() {
     // node, the domain, the website. It is used to join, and then it dies.
     let hub = spawn_node("official-bootstrap").await;
     let a = spawn_node("peer-a").await;
-    let b = spawn_node("peer-b").await;
+    let b = spawn_node_fetching_locally("peer-b").await;
 
     join_via_share_link(&a, &hub).await;
     join_via_share_link(&b, &hub).await;
@@ -445,8 +463,15 @@ async fn test_h_the_network_survives_losing_the_node_everyone_joined_through() {
 
     // Announcement, discovery and transfer all still work.
     let source = write_sample_file(a.dir.path(), "after.mp4", 128 * 1024);
-    let cid =
-        publish_until_announced(a.node(), &source, "Life after the bootstrap", &["indie"]).await;
+    let origin = OriginServer::serving(std::fs::read(&source).unwrap()).await;
+    let cid = publish_until_announced_from(
+        a.node(),
+        &source,
+        "Life after the bootstrap",
+        &["indie"],
+        &origin.base_url,
+    )
+    .await;
 
     let b_node = b.node().clone();
     wait_until(PROPAGATION_TIMEOUT, || {
@@ -536,17 +561,25 @@ async fn blocking_a_creator_stops_their_announcements_being_stored() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn blocking_content_stops_this_node_holding_and_serving_it() {
+async fn blocking_content_stops_this_node_passing_it_on() {
     // Section 33: blocking is not only about what you see, it is about not
-    // participating in distributing something. Refusing requests alone would
-    // not do it — a peer asking for a chunk never says which video it belongs
-    // to — so the content goes.
+    // helping to distribute something. What this node can pass on is the
+    // metadata and the manifest — the manifest being what lets anyone else
+    // check the creator's file — so that is what goes.
     let publisher = spawn_node("publisher").await;
-    let viewer = spawn_node("viewer").await;
+    let viewer = spawn_node_fetching_locally("viewer").await;
     join_via_share_link(&viewer, &publisher).await;
 
     let source = write_sample_file(publisher.dir.path(), "unwanted.mp4", 2 * 1024 * 1024 + 11);
-    let cid = publish_until_announced(publisher.node(), &source, "Unwanted", &["gaming"]).await;
+    let origin = OriginServer::serving(std::fs::read(&source).unwrap()).await;
+    let cid = publish_until_announced_from(
+        publisher.node(),
+        &source,
+        "Unwanted",
+        &["gaming"],
+        &origin.base_url,
+    )
+    .await;
 
     let viewer_node = viewer.node().clone();
     wait_until(PROPAGATION_TIMEOUT, || {
@@ -558,26 +591,26 @@ async fn blocking_content_stops_this_node_holding_and_serving_it() {
     .await
     .expect("the announcement should arrive");
 
-    viewer.node().fetch_video(cid).await.expect("fetching");
-    let manifest = viewer.node().manifest(&cid).unwrap().expect("the manifest");
-    assert!(viewer.node().video(&cid).unwrap().unwrap().have_content);
-    assert!(viewer.node().storage().usage().unwrap().total_bytes > 2_000_000);
+    // Watching it pulls the manifest in, which is the thing this node could
+    // then hand to somebody else.
+    viewer.node().prepare_stream(cid).await.expect("a plan");
+    assert!(
+        viewer.node().storage().has(&cid),
+        "the manifest should be held after watching"
+    );
 
     viewer.node().block_cid(&cid, "not for me").unwrap();
 
-    // Gone from the machine, not merely hidden.
-    assert!(!viewer.node().video(&cid).unwrap().unwrap().have_content);
-    for chunk in &manifest.chunks {
-        assert!(
-            !viewer.node().storage().has(chunk),
-            "a blocked video's chunks should not still be here"
-        );
-    }
     assert!(
         !viewer.node().storage().has(&cid),
-        "the manifest is still here"
+        "a blocked video's manifest should not still be here to serve"
     );
-    assert!(viewer.node().storage().usage().unwrap().total_bytes < 100_000);
+    assert!(!viewer.node().video(&cid).unwrap().unwrap().have_manifest);
+    // And it will not play here either.
+    assert!(
+        viewer.node().prepare_stream(cid).await.is_err(),
+        "a blocked video must not stream"
+    );
 
     publisher.shutdown().await;
     viewer.shutdown().await;
@@ -586,13 +619,19 @@ async fn blocking_content_stops_this_node_holding_and_serving_it() {
 #[tokio::test(flavor = "multi_thread")]
 async fn blocking_a_creator_discards_everything_of_theirs() {
     let publisher = spawn_node("publisher").await;
-    let viewer = spawn_node("viewer").await;
+    let viewer = spawn_node_fetching_locally("viewer").await;
     join_via_share_link(&viewer, &publisher).await;
 
     let mut cids = Vec::new();
+    let mut origins = Vec::new();
     for name in ["first", "second"] {
         let source = write_sample_file(publisher.dir.path(), &format!("{name}.mp4"), 512 * 1024);
-        cids.push(publish_until_announced(publisher.node(), &source, name, &[]).await);
+        let origin = OriginServer::serving(std::fs::read(&source).unwrap()).await;
+        cids.push(
+            publish_until_announced_from(publisher.node(), &source, name, &[], &origin.base_url)
+                .await,
+        );
+        origins.push(origin);
     }
 
     let viewer_node = viewer.node().clone();
@@ -603,9 +642,9 @@ async fn blocking_a_creator_discards_everything_of_theirs() {
     .expect("both announcements should arrive");
 
     for cid in &cids {
-        viewer.node().fetch_video(*cid).await.expect("fetching");
+        viewer.node().prepare_stream(*cid).await.expect("a plan");
+        assert!(viewer.node().storage().has(cid));
     }
-    assert!(viewer.node().storage().usage().unwrap().total_bytes > 500_000);
 
     viewer
         .node()
@@ -613,60 +652,46 @@ async fn blocking_a_creator_discards_everything_of_theirs() {
         .unwrap();
 
     for cid in &cids {
-        assert!(!viewer.node().video(cid).unwrap().unwrap().have_content);
-        assert!(!viewer.node().storage().has(cid));
+        assert!(!viewer.node().video(cid).unwrap().unwrap().have_manifest);
+        assert!(
+            !viewer.node().storage().has(cid),
+            "nothing of a blocked creator's should still be here to serve"
+        );
     }
-    assert!(viewer.node().storage().usage().unwrap().total_bytes < 100_000);
 
     publisher.shutdown().await;
     viewer.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn blocking_one_video_leaves_an_identical_one_playable() {
-    // Identical files share chunks, so discarding one video's blocks must not
-    // quietly break another the user still wants.
-    let node = spawn_node("solo").await;
-    let bytes = write_sample_file(node.dir.path(), "shared.mp4", 300 * 1024);
-    let copy = node.dir.path().join("copy.mp4");
-    std::fs::copy(&bytes, &copy).unwrap();
-
-    // Two videos, same content, different names: two ids, one set of chunks.
-    let unwanted = publish_until_announced(node.node(), &bytes, "Unwanted", &[]).await;
-    let wanted = publish_until_announced(node.node(), &copy, "Wanted", &[]).await;
-    assert_ne!(unwanted, wanted);
-    let shared = node.node().manifest(&wanted).unwrap().unwrap();
-
-    // Both were published here, so blocking leaves them alone — this node may
-    // be the only copy.
-    node.node().block_cid(&unwanted, "not for me").unwrap();
-    for chunk in &shared.chunks {
-        assert!(
-            node.node().storage().has(chunk),
-            "our own content was discarded"
-        );
-    }
-    assert!(node.node().export_video(wanted, None).is_ok());
-
-    node.shutdown().await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn blocking_a_creator_frees_chunks_their_own_videos_share() {
-    // Two identical videos by one creator share a set of chunks. If each
-    // counted as a reason to keep the other's, blocking that creator would
-    // free nothing — the two would protect each other.
+async fn blocking_one_video_leaves_another_alone() {
+    // Blocking is per video. Discarding what one video needs must not take
+    // away what another the user still wants needs too.
     let publisher = spawn_node("publisher").await;
-    let viewer = spawn_node("viewer").await;
+    let viewer = spawn_node_fetching_locally("viewer").await;
     join_via_share_link(&viewer, &publisher).await;
 
-    let original = write_sample_file(publisher.dir.path(), "one.mp4", 400 * 1024);
-    let duplicate = publisher.dir.path().join("two.mp4");
-    std::fs::copy(&original, &duplicate).unwrap();
+    let unwanted_file = write_sample_file(publisher.dir.path(), "unwanted.mp4", 300 * 1024);
+    let wanted_file = write_seeded_file(publisher.dir.path(), "wanted.mp4", 300 * 1024, 9);
+    let unwanted_origin = OriginServer::serving(std::fs::read(&unwanted_file).unwrap()).await;
+    let wanted_origin = OriginServer::serving(std::fs::read(&wanted_file).unwrap()).await;
 
-    let first = publish_until_announced(publisher.node(), &original, "One", &[]).await;
-    let second = publish_until_announced(publisher.node(), &duplicate, "Two", &[]).await;
-    assert_ne!(first, second, "different names, so different video ids");
+    let unwanted = publish_until_announced_from(
+        publisher.node(),
+        &unwanted_file,
+        "Unwanted",
+        &[],
+        &unwanted_origin.base_url,
+    )
+    .await;
+    let wanted = publish_until_announced_from(
+        publisher.node(),
+        &wanted_file,
+        "Wanted",
+        &[],
+        &wanted_origin.base_url,
+    )
+    .await;
 
     let viewer_node = viewer.node().clone();
     wait_until(PROPAGATION_TIMEOUT, || {
@@ -675,29 +700,44 @@ async fn blocking_a_creator_frees_chunks_their_own_videos_share() {
     .await
     .expect("both announcements should arrive");
 
-    for cid in [first, second] {
-        viewer.node().fetch_video(cid).await.expect("fetching");
+    for cid in [unwanted, wanted] {
+        viewer.node().prepare_stream(cid).await.expect("a plan");
     }
-    let shared = viewer.node().manifest(&first).unwrap().unwrap();
-    assert_eq!(
-        shared.chunks,
-        viewer.node().manifest(&second).unwrap().unwrap().chunks,
-        "identical content should share its chunks"
+
+    viewer.node().block_cid(&unwanted, "not for me").unwrap();
+
+    assert!(!viewer.node().storage().has(&unwanted));
+    assert!(
+        viewer.node().storage().has(&wanted),
+        "blocking one video took away another one's manifest"
     );
-
-    viewer
-        .node()
-        .block_creator(&publisher.node().public_key(), "spam")
-        .unwrap();
-
-    for chunk in &shared.chunks {
-        assert!(
-            !viewer.node().storage().has(chunk),
-            "chunks shared between two blocked videos were kept"
-        );
-    }
-    assert!(viewer.node().storage().usage().unwrap().total_bytes < 100_000);
+    assert!(
+        viewer.node().prepare_stream(wanted).await.is_ok(),
+        "the video the user kept should still play"
+    );
 
     publisher.shutdown().await;
     viewer.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn blocking_our_own_video_hides_it_without_destroying_it() {
+    // A node that published something may be the only record of it. Hiding it
+    // locally should not be a way to lose it by accident.
+    let node = spawn_node("solo").await;
+    let file = write_sample_file(node.dir.path(), "mine.mp4", 200 * 1024);
+    let cid = publish_until_announced(node.node(), &file, "Mine", &[]).await;
+
+    node.node().block_cid(&cid, "second thoughts").unwrap();
+
+    assert!(
+        node.node().storage().has(&cid),
+        "our own manifest should be kept"
+    );
+    assert!(
+        node.node().prepare_stream(cid).await.is_err(),
+        "it should still be hidden here"
+    );
+
+    node.shutdown().await;
 }

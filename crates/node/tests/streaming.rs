@@ -1,13 +1,12 @@
-//! Range requests, and the read-ahead behind them.
+//! Range requests, and what the node does with the bytes a server hands it.
 //!
 //! A player asks for byte ranges, not chunks, and it asks for a new one every
-//! time somebody drags the scrubber. Two things have to hold: the bytes handed
-//! back are exactly the bytes at those offsets, and the fetching of chunk N+1
-//! does not wait for chunk N to reach the player.
+//! time somebody drags the scrubber. Three things have to hold: the bytes
+//! handed back are exactly the bytes at those offsets, fetching chunk N+1 does
+//! not wait for chunk N to reach the player, and bytes that do not match what
+//! the creator signed never reach the player at all.
 
 mod support;
-
-use std::path::Path;
 
 use futures::StreamExt;
 use ovn_node::ByteRange;
@@ -18,14 +17,21 @@ use support::*;
 const CHUNK: u64 = 1024 * 1024;
 
 /// Collect a whole range into one buffer.
-async fn read_range(node: &ovn_node::Node, cid: ContentId, range: ByteRange) -> Vec<u8> {
-    let plan = node.prepare_stream(cid).await.expect("a stream plan");
+async fn read_range(
+    node: &ovn_node::Node,
+    cid: ContentId,
+    range: ByteRange,
+) -> std::result::Result<Vec<u8>, String> {
+    let plan = node
+        .prepare_stream(cid)
+        .await
+        .map_err(|e| format!("preparing: {e}"))?;
     let mut out = Vec::new();
     let mut stream = Box::pin(node.stream_range(plan, range));
     while let Some(piece) = stream.next().await {
-        out.extend_from_slice(&piece.expect("a chunk of the response"));
+        out.extend_from_slice(&piece.map_err(|e| e.to_string())?);
     }
-    out
+    Ok(out)
 }
 
 /// Offsets worth checking for a file of `total` bytes: the ends, the chunk
@@ -42,12 +48,10 @@ fn interesting_ranges(total: u64) -> Vec<ByteRange> {
             start: 0,
             end: last,
         },
-        // Entirely inside the first chunk.
         ByteRange {
             start: 10,
             end: 1000,
         },
-        // Ending exactly on a boundary, and starting exactly on one.
         ByteRange {
             start: 0,
             end: CHUNK - 1,
@@ -56,7 +60,6 @@ fn interesting_ranges(total: u64) -> Vec<ByteRange> {
             start: CHUNK,
             end: CHUNK + 5,
         },
-        // Straddling one boundary, then two.
         ByteRange {
             start: CHUNK - 3,
             end: CHUNK + 3,
@@ -65,7 +68,6 @@ fn interesting_ranges(total: u64) -> Vec<ByteRange> {
             start: CHUNK - 1,
             end: 2 * CHUNK + 1,
         },
-        // The tail, which is a partial chunk.
         ByteRange {
             start: 3 * CHUNK,
             end: last,
@@ -75,53 +77,37 @@ fn interesting_ranges(total: u64) -> Vec<ByteRange> {
     ranges
 }
 
-/// Every file under the block store, so a test can count what has arrived.
-fn stored_blocks(blocks_dir: &Path) -> usize {
-    fn walk(dir: &Path, count: &mut usize) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, count);
-            } else if !path
-                .file_name()
-                .map(|n| n.to_string_lossy().starts_with(".tmp-"))
-                .unwrap_or(false)
-            {
-                *count += 1;
-            }
-        }
-    }
-    let mut count = 0;
-    walk(blocks_dir, &mut count);
-    count
+/// A node, a creator's server, and a published video served from it.
+async fn published(name: &str, size: usize) -> (TestNode, OriginServer, ContentId, Vec<u8>) {
+    published_with(name, size, OriginBehaviour::default()).await
+}
+
+async fn published_with(
+    name: &str,
+    size: usize,
+    behaviour: OriginBehaviour,
+) -> (TestNode, OriginServer, ContentId, Vec<u8>) {
+    let node = spawn_node_fetching_locally(name).await;
+    let file = write_sample_file(node.dir.path(), "clip.mp4", size);
+    let body = std::fs::read(&file).unwrap();
+    // Published before the server is told to misbehave, so the manifest
+    // describes the real file and the misbehaviour is a departure from it.
+    let origin = OriginServer::serving_with(body.clone(), behaviour).await;
+    let cid = publish_from(node.node(), &file, "Clip", &["test"], &origin).await;
+    (node, origin, cid, body)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ranges_are_byte_exact_including_across_chunk_boundaries() {
-    let node = spawn_node("reader").await;
     // Three and a half chunks, so the last one is partial.
     let size = (3.5 * CHUNK as f64) as usize;
-    let file = write_sample_file(node.dir.path(), "clip.bin", size);
-    let source = std::fs::read(&file).unwrap();
+    let (node, _origin, cid, body) = published("reader", size).await;
 
-    let report = node
-        .node()
-        .publish_video(
-            &file,
-            Some("Clip".into()),
-            String::new(),
-            vec!["test".into()],
-        )
-        .await
-        .expect("publish");
-    let cid: ContentId = report.video.cid.parse().unwrap();
-
-    for range in interesting_ranges(source.len() as u64) {
-        let got = read_range(node.node(), cid, range).await;
-        let expected = &source[range.start as usize..=range.end as usize];
+    for range in interesting_ranges(body.len() as u64) {
+        let got = read_range(node.node(), cid, range)
+            .await
+            .unwrap_or_else(|e| panic!("bytes {}-{}: {e}", range.start, range.end));
+        let expected = &body[range.start as usize..=range.end as usize];
         assert_eq!(
             got.len(),
             expected.len(),
@@ -140,67 +126,45 @@ async fn ranges_are_byte_exact_including_across_chunk_boundaries() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ranges_are_byte_exact_when_the_bytes_come_from_a_peer() {
-    // The same offsets, but every chunk has to be fetched, so the read-ahead
-    // window rather than the local store decides what arrives when.
-    let server = spawn_node("server").await;
-    let client = spawn_node("client").await;
-    join_via_share_link(&client, &server).await;
+async fn nothing_is_held_locally_just_because_it_was_watched() {
+    // The point of the whole arrangement: a node carries what is needed to
+    // find and check a video, and does not carry the video.
+    let size = (2.0 * CHUNK as f64) as usize;
+    let (node, _origin, cid, body) = published("viewer", size).await;
 
-    let size = (2.5 * CHUNK as f64) as usize;
-    let file = write_sample_file(server.dir.path(), "clip.bin", size);
-    let source = std::fs::read(&file).unwrap();
-    let cid = publish_until_announced(server.node(), &file, "Clip", &["test"]).await;
-
-    wait_until(PROPAGATION_TIMEOUT, || {
-        client.node().video(&cid).ok().flatten().is_some()
-    })
+    let whole = read_range(
+        node.node(),
+        cid,
+        ByteRange {
+            start: 0,
+            end: body.len() as u64 - 1,
+        },
+    )
     .await
-    .expect("the announcement reaches the client");
+    .expect("the whole file");
+    assert_eq!(whole, body);
 
-    for range in interesting_ranges(source.len() as u64) {
-        let got = read_range(client.node(), cid, range).await;
-        let expected = &source[range.start as usize..=range.end as usize];
-        assert_eq!(
-            got, expected,
-            "wrong bytes for {}-{} fetched from a peer",
-            range.start, range.end
-        );
-    }
+    // The manifest and the thumbnail are held. Two megabytes of video are not.
+    let cache = node.node().status().await.unwrap().cache;
+    assert!(
+        (cache.total_bytes as u64) < CHUNK,
+        "watching a {size}-byte video left {} bytes in the cache",
+        cache.total_bytes
+    );
 
-    client.shutdown().await;
-    server.shutdown().await;
+    node.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn chunks_the_player_has_not_reached_are_already_on_their_way() {
-    // This is the whole point of the window. Ask for a range covering several
-    // chunks, take only the first, and the rest should already be arriving
-    // rather than waiting to be asked for.
-    let server = spawn_node("server").await;
-    let client = spawn_node("client").await;
-    join_via_share_link(&client, &server).await;
-
+    // The read-ahead window, which is what stops every chunk costing a fresh
+    // round trip to the creator's server.
     let size = (4.0 * CHUNK as f64) as usize;
-    let file = write_sample_file(server.dir.path(), "clip.bin", size);
-    let cid = publish_until_announced(server.node(), &file, "Clip", &["test"]).await;
+    let (node, _origin, cid, _body) = published("reader", size).await;
 
-    wait_until(PROPAGATION_TIMEOUT, || {
-        client.node().video(&cid).ok().flatten().is_some()
-    })
-    .await
-    .expect("the announcement reaches the client");
-
-    let blocks = client.dir.path().join("blocks");
-    let plan = client
-        .node()
-        .prepare_stream(cid)
-        .await
-        .expect("a stream plan");
-    // Fetching the manifest already stored one block; count from there.
-    let before = stored_blocks(&blocks);
-
-    let mut stream = Box::pin(client.node().stream_range(
+    let plan = node.node().prepare_stream(cid).await.expect("a plan");
+    let started = std::time::Instant::now();
+    let mut stream = Box::pin(node.node().stream_range(
         plan,
         ByteRange {
             start: 0,
@@ -208,53 +172,36 @@ async fn chunks_the_player_has_not_reached_are_already_on_their_way() {
         },
     ));
     let first = stream.next().await.expect("a first chunk");
-    assert!(first.is_ok());
+    assert!(first.is_ok(), "{:?}", first.err());
 
-    // Chunk 0 has been handed over. With a window of four, chunks 1..=3 were
-    // requested at the same time and should land without anybody reading on.
-    wait_until(std::time::Duration::from_secs(30), || {
-        stored_blocks(&blocks) >= before + 3
-    })
-    .await
-    .unwrap_or_else(|_| {
-        panic!(
-            "after one chunk was read, only {} blocks had arrived (started at {before}); \
-             chunks are being fetched one at a time",
-            stored_blocks(&blocks)
-        )
-    });
+    // Draining the rest must not take four more round trips' worth of work;
+    // with a window of four they were all requested at once.
+    let mut total = first.unwrap().len();
+    while let Some(piece) = stream.next().await {
+        total += piece.expect("a chunk").len();
+    }
+    assert_eq!(total as u64, 4 * CHUNK);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "streaming four chunks took {:?}",
+        started.elapsed()
+    );
 
-    drop(stream);
-    client.shutdown().await;
-    server.shutdown().await;
+    node.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn abandoning_a_stream_partway_leaves_the_node_working() {
-    // A seek drops the response mid-flight, which aborts whatever was being
-    // fetched for it. The next request must not inherit any of that.
-    let server = spawn_node("server").await;
-    let client = spawn_node("client").await;
-    join_via_share_link(&client, &server).await;
-
     let size = (3.0 * CHUNK as f64) as usize;
-    let file = write_sample_file(server.dir.path(), "clip.bin", size);
-    let source = std::fs::read(&file).unwrap();
-    let cid = publish_until_announced(server.node(), &file, "Clip", &["test"]).await;
-
-    wait_until(PROPAGATION_TIMEOUT, || {
-        client.node().video(&cid).ok().flatten().is_some()
-    })
-    .await
-    .expect("the announcement reaches the client");
+    let (node, _origin, cid, body) = published("seeker", size).await;
 
     for _ in 0..3 {
-        let plan = client.node().prepare_stream(cid).await.expect("a plan");
-        let mut stream = Box::pin(client.node().stream_range(
+        let plan = node.node().prepare_stream(cid).await.expect("a plan");
+        let mut stream = Box::pin(node.node().stream_range(
             plan,
             ByteRange {
                 start: 0,
-                end: source.len() as u64 - 1,
+                end: body.len() as u64 - 1,
             },
         ));
         // One chunk, then walk away — as a player does when the viewer seeks.
@@ -262,21 +209,139 @@ async fn abandoning_a_stream_partway_leaves_the_node_working() {
         drop(stream);
     }
 
-    // And the whole file still reads back correctly afterwards.
     let whole = read_range(
-        client.node(),
+        node.node(),
         cid,
         ByteRange {
             start: 0,
-            end: source.len() as u64 - 1,
+            end: body.len() as u64 - 1,
+        },
+    )
+    .await
+    .expect("the file still reads back");
+    assert_eq!(whole, body, "the file did not read back after three seeks");
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_that_serves_something_else_is_caught() {
+    // The reason the manifest still exists. A chunk hash is no longer an
+    // address — nobody asks a peer for a chunk — but it is still a promise,
+    // signed by the creator, about what the bytes at an offset must be. A
+    // server that is swapped, compromised, or told to serve one viewer
+    // something different cannot do it unnoticed.
+    let size = (2.0 * CHUNK as f64) as usize;
+    let (node, _origin, cid, body) = published_with(
+        "suspicious",
+        size,
+        OriginBehaviour {
+            corrupt: true,
+            ..Default::default()
         },
     )
     .await;
-    assert_eq!(
-        whole, source,
-        "the file did not read back after three seeks"
+
+    let error = read_range(
+        node.node(),
+        cid,
+        ByteRange {
+            start: 0,
+            end: body.len() as u64 - 1,
+        },
+    )
+    .await
+    .expect_err("altered bytes must not be streamed to the player");
+    assert!(
+        error.contains("not the file that was announced") || error.contains("do not match"),
+        "the error should say the file is not what was announced: {error}"
     );
 
-    client.shutdown().await;
-    server.shutdown().await;
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_that_ignores_range_requests_is_refused() {
+    // Reading a whole video to find one chunk of it would mean holding the
+    // whole video in memory, which is exactly what this design exists to
+    // avoid.
+    let size = (2.0 * CHUNK as f64) as usize;
+    let (node, _origin, cid, _body) = published_with(
+        "stubborn",
+        size,
+        OriginBehaviour {
+            ignore_ranges: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let error = read_range(
+        node.node(),
+        cid,
+        ByteRange {
+            start: 0,
+            end: 1023,
+        },
+    )
+    .await
+    .expect_err("a server that cannot do ranges cannot be streamed from");
+    assert!(
+        error.contains("range") || error.contains("offered"),
+        "the error should name the problem: {error}"
+    );
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_that_has_gone_away_is_reported_rather_than_hung_on_to() {
+    let size = (1.5 * CHUNK as f64) as usize;
+    let (node, mut origin, cid, _body) = published("abandoned", size).await;
+    origin.stop();
+    // Give the listener time to actually close.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let error = read_range(
+        node.node(),
+        cid,
+        ByteRange {
+            start: 0,
+            end: 1023,
+        },
+    )
+    .await
+    .expect_err("there is nowhere to fetch from");
+    assert!(!error.is_empty());
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_source_inside_a_network_is_refused_unless_that_was_asked_for() {
+    // A node fetches whatever address an announcement gives it. Without this
+    // a stranger could publish `http://192.168.0.1/` and have every viewer's
+    // node knock on doors inside their own house.
+    let node = spawn_node("cautious").await;
+    let file = write_sample_file(node.dir.path(), "clip.mp4", 200_000);
+    let body = std::fs::read(&file).unwrap();
+    let origin = OriginServer::serving(body.clone()).await;
+    let cid = publish_from(node.node(), &file, "Clip", &["test"], &origin).await;
+
+    let error = read_range(
+        node.node(),
+        cid,
+        ByteRange {
+            start: 0,
+            end: 1023,
+        },
+    )
+    .await
+    .expect_err("a loopback source must be refused by default");
+    assert!(
+        error.contains("not an address on the internet"),
+        "the error should say why: {error}"
+    );
+
+    node.shutdown().await;
 }

@@ -3,7 +3,7 @@
 use crate::{Database, DatabaseError, Result};
 
 /// Bump this and append a migration whenever the schema changes.
-pub(crate) const SCHEMA_VERSION: i64 = 2;
+pub(crate) const SCHEMA_VERSION: i64 = 3;
 
 const MIGRATION_1: &str = r#"
 -- ---------------------------------------------------------------- network
@@ -142,6 +142,16 @@ ALTER TABLE following ADD COLUMN addresses TEXT NOT NULL DEFAULT '';
 ALTER TABLE following ADD COLUMN last_checked INTEGER NOT NULL DEFAULT 0;
 "#;
 
+/// Where a video's bytes are served from.
+///
+/// The network carries what is needed to find and check a video; the file
+/// itself comes from the creator's own server, and this is the address of it.
+/// Signed as part of the announcement, so it is a claim by the creator rather
+/// than by whoever relayed it.
+const MIGRATION_3: &str = r#"
+ALTER TABLE known_videos ADD COLUMN source_url TEXT NOT NULL DEFAULT '';
+"#;
+
 impl Database {
     pub(crate) fn migrate(&self) -> Result<()> {
         let conn = self.conn()?;
@@ -157,6 +167,9 @@ impl Database {
         }
         if current < 2 {
             conn.execute_batch(MIGRATION_2)?;
+        }
+        if current < 3 {
+            conn.execute_batch(MIGRATION_3)?;
         }
         if current != SCHEMA_VERSION {
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;

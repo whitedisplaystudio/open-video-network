@@ -95,7 +95,8 @@ pub struct FetchDto {
     pub chunks_fetched: usize,
     pub chunks_already_held: usize,
     pub bytes_fetched: u64,
-    pub providers_tried: usize,
+    pub source_url: String,
+    pub path: String,
     pub blocks_evicted: u64,
 }
 
@@ -106,7 +107,8 @@ impl From<FetchReport> for FetchDto {
             chunks_fetched: r.chunks_fetched,
             chunks_already_held: r.chunks_already_held,
             bytes_fetched: r.bytes_fetched,
-            providers_tried: r.providers_tried,
+            source_url: r.source_url,
+            path: r.path.display().to_string(),
             blocks_evicted: r.eviction.blocks_removed,
         }
     }
@@ -253,19 +255,15 @@ pub struct AddPeerRequest {
 #[serde(rename_all = "camelCase")]
 pub struct PublishRequest {
     pub path: PathBuf,
+    /// Where viewers will fetch the file from. The network carries the
+    /// metadata; this is where the bytes live.
+    pub source_url: String,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub tags: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportRequest {
-    #[serde(default)]
-    pub path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -349,10 +347,21 @@ mod tests {
     }
 
     #[test]
-    fn a_publish_request_needs_only_a_path() {
-        let request: PublishRequest = serde_json::from_str(r#"{"path":"/tmp/a.mp4"}"#).unwrap();
+    fn a_publish_request_needs_a_path_and_somewhere_to_fetch_from() {
+        let request: PublishRequest = serde_json::from_str(
+            r#"{"path":"/tmp/a.mp4","sourceUrl":"https://videos.example/a.mp4"}"#,
+        )
+        .unwrap();
         assert_eq!(request.path, PathBuf::from("/tmp/a.mp4"));
+        assert_eq!(request.source_url, "https://videos.example/a.mp4");
         assert!(request.title.is_none());
         assert!(request.tags.is_empty());
+    }
+
+    #[test]
+    fn a_publish_request_with_no_source_is_refused() {
+        // The network does not carry the file, so an announcement with nowhere
+        // to fetch it from describes a video nobody can watch.
+        assert!(serde_json::from_str::<PublishRequest>(r#"{"path":"/tmp/a.mp4"}"#).is_err());
     }
 }

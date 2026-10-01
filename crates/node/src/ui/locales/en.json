@@ -175,7 +175,7 @@
     "admin.content.title": "Content",
     "admin.content.lede": "What this node publishes and what it is holding for the network.",
     "admin.publish.title": "Publish a video",
-    "admin.publish.file": "File",
+    "admin.publish.file": "File, so this node can hash it and take a thumbnail",
     "admin.publish.titleField": "Title",
     "admin.publish.titlePlaceholder": "Taken from the file name if left empty",
     "admin.publish.description": "Description",
@@ -281,6 +281,11 @@
     "viewer.channels.clash": "name shared",
     "viewer.channels.clash.title": "Another identity on this device uses the same display name. Compare the key.",
     "viewer.channels.clash.warning_one": "Careful: this device already knows {count} other identity calling itself {name}. A name is not owned by anyone — there is no register of names for it to be owned in. Check the key against the one you were given.",
-    "viewer.channels.clash.warning_other": "Careful: this device already knows {count} other identities calling themselves {name}. A name is not owned by anyone — there is no register of names for it to be owned in. Check the key against the one you were given."
+    "viewer.channels.clash.warning_other": "Careful: this device already knows {count} other identities calling themselves {name}. A name is not owned by anyone — there is no register of names for it to be owned in. Check the key against the one you were given.",
+    "admin.publish.lede": "The network carries the title, tags, thumbnail and the hashes the file must match. It does not carry the file: viewers fetch that from your own server, and check what arrives against the hashes.",
+    "admin.publish.sourceUrl": "Where viewers fetch it from",
+    "admin.publish.sourceUrlPlaceholder": "https://videos.example/clip.mp4",
+    "admin.publish.sourceUrlHint": "Must serve this exact file, and must answer range requests so playback can start without downloading all of it. If you later change the file there, every viewer will see that it no longer matches.",
+    "admin.publish.noSourceUrl": "Give the address viewers will fetch the file from."
   }
 }

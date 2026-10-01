@@ -234,6 +234,7 @@ mod tests {
                     tags: tags.iter().map(|t| t.to_string()).collect(),
                     duration_secs: 600,
                     thumbnail_cid: None,
+                    source_url: "https://videos.example/clip.mp4".to_string(),
                 },
                 creator,
             )

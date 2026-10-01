@@ -134,7 +134,13 @@ async fn every_api_path_the_ui_calls_is_a_real_route() {
     let source = write_sample_file(node.dir.path(), "clip.mp4", 4096);
     let report = node
         .node()
-        .publish_video(&source, Some("Wiring".into()), String::new(), vec![])
+        .publish_video(
+            &source,
+            Some("Wiring".into()),
+            String::new(),
+            vec![],
+            "https://videos.example/clip.mp4".to_string(),
+        )
         .await
         .unwrap();
     let cid = report.video.cid.clone();

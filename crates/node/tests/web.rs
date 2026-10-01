@@ -66,26 +66,47 @@ impl Client {
 }
 
 async fn publish(node: &ovn_node::Node, path: &std::path::Path, title: &str) -> ContentId {
+    publish_served(node, path, title, "https://videos.example/clip.mp4").await
+}
+
+async fn publish_served(
+    node: &ovn_node::Node,
+    path: &std::path::Path,
+    title: &str,
+    source_url: &str,
+) -> ContentId {
     let report = node
         .publish_video(
             path,
             Some(title.to_string()),
             String::new(),
             vec!["test".into()],
+            source_url.to_string(),
         )
         .await
         .expect("publishing");
     ContentId::parse(&report.video.cid).unwrap()
 }
 
+/// A node that fetches from a loopback origin, the file it serves, and the
+/// published id — the shape nearly every streaming test needs now.
+async fn streaming_fixture(
+    name: &str,
+    size: usize,
+) -> (TestNode, OriginServer, ContentId, Vec<u8>) {
+    let node = spawn_node_fetching_locally(name).await;
+    let source = write_sample_file(node.dir.path(), "clip.mp4", size);
+    let body = std::fs::read(&source).unwrap();
+    let origin = OriginServer::serving(body.clone()).await;
+    let cid = publish_served(node.node(), &source, "Clip", &origin.base_url).await;
+    (node, origin, cid, body)
+}
+
 // ------------------------------------------------------------- streaming
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_whole_video_streams_with_range_support_advertised() {
-    let node = spawn_node("streamer").await;
-    let source = write_sample_file(node.dir.path(), "clip.mp4", 2 * 1024 * 1024 + 500);
-    let original = std::fs::read(&source).unwrap();
-    let cid = publish(node.node(), &source, "Clip").await;
+    let (node, _origin, cid, original) = streaming_fixture("streamer", 2 * 1024 * 1024 + 500).await;
     let client = Client::new(&node);
 
     let response = client
@@ -112,11 +133,9 @@ async fn a_whole_video_streams_with_range_support_advertised() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_range_request_returns_exactly_that_slice() {
-    let node = spawn_node("streamer").await;
     // Three chunks, so a range can span a chunk boundary.
-    let source = write_sample_file(node.dir.path(), "clip.mp4", 2 * 1024 * 1024 + 1000);
-    let original = std::fs::read(&source).unwrap();
-    let cid = publish(node.node(), &source, "Clip").await;
+    let (node, _origin, cid, original) =
+        streaming_fixture("streamer", 2 * 1024 * 1024 + 1000).await;
     let client = Client::new(&node);
 
     // A slice inside one chunk.
@@ -229,26 +248,22 @@ async fn an_unknown_media_type_is_served_as_opaque_bytes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_video_streams_from_a_peer_without_being_downloaded_first() {
-    // The point of streaming: playback starts without a prior `video get`.
+async fn a_video_heard_about_from_a_peer_streams_from_the_creators_server() {
+    // The two halves of the arrangement, in one test. The viewer learns that
+    // the video exists, and what its bytes must hash to, from a peer. The
+    // bytes themselves come from the creator's own server, and the viewer
+    // checks them against what the peer told it.
     let publisher = spawn_node("publisher").await;
-    let viewer = spawn_node("viewer").await;
+    let viewer = spawn_node_fetching_locally("viewer").await;
     join_via_share_link(&viewer, &publisher).await;
 
     let source = write_sample_file(publisher.dir.path(), "clip.mp4", 2 * 1024 * 1024 + 77);
     let original = std::fs::read(&source).unwrap();
+    let origin = OriginServer::serving(original.clone()).await;
 
-    let cid = loop {
-        let report = publisher
-            .node()
-            .publish_video(&source, Some("Remote".into()), String::new(), vec![])
-            .await
-            .unwrap();
-        if report.announced_to_network {
-            break ContentId::parse(&report.video.cid).unwrap();
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    };
+    let cid =
+        publish_until_announced_from(publisher.node(), &source, "Remote", &[], &origin.base_url)
+            .await;
 
     let viewer_node = viewer.node().clone();
     wait_until(PROPAGATION_TIMEOUT, || {
@@ -261,7 +276,7 @@ async fn a_video_streams_from_a_peer_without_being_downloaded_first() {
     .expect("the announcement should arrive");
     assert!(
         !viewer.node().video(&cid).unwrap().unwrap().have_content,
-        "the viewer must not hold the content yet"
+        "the viewer holds no video, now or ever"
     );
 
     let client = Client::new(&viewer);
@@ -308,7 +323,13 @@ async fn publishing_a_real_video_produces_a_thumbnail_a_peer_can_fetch() {
     let cid = loop {
         let report = publisher
             .node()
-            .publish_video(&source, Some("Thumbed".into()), String::new(), vec![])
+            .publish_video(
+                &source,
+                Some("Thumbed".into()),
+                String::new(),
+                vec![],
+                "https://videos.example/clip.mp4".to_string(),
+            )
             .await
             .unwrap();
         if report.announced_to_network {
@@ -387,23 +408,16 @@ async fn a_video_with_no_thumbnail_reports_not_found_rather_than_failing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_fetch_reports_its_progress_from_start_to_finish() {
     let publisher = spawn_node("publisher").await;
-    let viewer = spawn_node("viewer").await;
+    let viewer = spawn_node_fetching_locally("viewer").await;
     join_via_share_link(&viewer, &publisher).await;
 
     let mut events = viewer.node().subscribe();
 
     let source = write_sample_file(publisher.dir.path(), "clip.mp4", 3 * 1024 * 1024);
-    let cid = loop {
-        let report = publisher
-            .node()
-            .publish_video(&source, Some("Progress".into()), String::new(), vec![])
-            .await
-            .unwrap();
-        if report.announced_to_network {
-            break ContentId::parse(&report.video.cid).unwrap();
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    };
+    let origin = OriginServer::serving(std::fs::read(&source).unwrap()).await;
+    let cid =
+        publish_until_announced_from(publisher.node(), &source, "Progress", &[], &origin.base_url)
+            .await;
 
     let viewer_node = viewer.node().clone();
     wait_until(PROPAGATION_TIMEOUT, || {
@@ -771,23 +785,29 @@ fn urlencoding(value: &str) -> String {
 // -------------------------------------------------------------- uploading
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_browser_upload_publishes_the_file() {
-    let node = spawn_node("uploader").await;
+async fn a_browser_upload_hashes_the_file_and_keeps_none_of_it() {
+    // The browser still sends the file, because the node has to hash it and
+    // take a thumbnail from it. What changes is what happens next: the bytes
+    // are not kept. What goes on the network is the metadata and the hashes,
+    // and viewers fetch the file from the URL given here.
+    let node = spawn_node_fetching_locally("uploader").await;
     let client = Client::new(&node);
     let payload: Vec<u8> = (0..(1024 * 1024 + 321)).map(|i| (i % 253) as u8).collect();
+    let origin = OriginServer::serving(payload.clone()).await;
 
     let response = client
         .http
         .post(format!(
-            "{}/v1/upload?fileName=holiday.mp4&title=Holiday&tags=travel,%20family",
-            client.base
+            "{}/v1/upload?fileName=holiday.mp4&title=Holiday&tags=travel,%20family&sourceUrl={}",
+            client.base,
+            urlencode(&origin.base_url),
         ))
         .bearer_auth(&client.token)
         .body(payload.clone())
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
 
     let published: serde_json::Value = response.json().await.unwrap();
     assert_eq!(published["title"], "Holiday");
@@ -797,15 +817,27 @@ async fn a_browser_upload_publishes_the_file() {
     let cid = ContentId::parse(published["cid"].as_str().unwrap()).unwrap();
     let record = node.node().video(&cid).unwrap().unwrap();
     assert_eq!(record.tags, vec!["travel", "family"]);
-    assert!(record.is_local && record.have_content);
+    assert!(record.is_local, "this node published it");
+    assert!(
+        !record.have_content,
+        "the node must not be holding the video it just published"
+    );
+    assert_eq!(record.source_url, origin.base_url);
 
-    // The staged copy is gone; the bytes live in the block store now.
+    // Neither the staged copy nor the block store holds a megabyte of video.
     let staged = std::fs::read_dir(node.node().config().uploads_dir())
         .map(|entries| entries.count())
         .unwrap_or(0);
-    assert_eq!(staged, 0);
+    assert_eq!(staged, 0, "the staged upload should have been cleaned up");
+    let cache = node.node().status().await.unwrap().cache;
+    assert!(
+        (cache.total_bytes as usize) < payload.len() / 2,
+        "publishing left {} bytes behind for a {}-byte file",
+        cache.total_bytes,
+        payload.len()
+    );
 
-    // And it streams straight back out.
+    // And it still streams, from the server that was named.
     let streamed = client
         .authed(&format!("/v1/videos/{cid}/stream"))
         .send()
@@ -817,6 +849,20 @@ async fn a_browser_upload_publishes_the_file() {
     assert_eq!(streamed.as_ref(), payload.as_slice());
 
     node.shutdown().await;
+}
+
+/// Percent-encode enough of a URL to survive a query string.
+fn urlencode(url: &str) -> String {
+    url.chars()
+        .map(|c| match c {
+            ':' => "%3A".to_string(),
+            '/' => "%2F".to_string(),
+            '?' => "%3F".to_string(),
+            '&' => "%26".to_string(),
+            '=' => "%3D".to_string(),
+            other => other.to_string(),
+        })
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread")]

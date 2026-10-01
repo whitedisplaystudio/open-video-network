@@ -152,6 +152,15 @@ struct StartArgs {
     /// Port for the local API.
     #[arg(long, default_value_t = DEFAULT_API_PORT)]
     api_port: u16,
+    /// Fetch videos whose source URL points inside your network rather than
+    /// out at the internet.
+    ///
+    /// Off by default. A node fetches whatever address an announcement gives
+    /// it, so without this a stranger could publish `http://192.168.0.1/` and
+    /// have every viewer's node knock on doors inside their own house. Turn it
+    /// on when somebody you trust is serving from a machine on your network.
+    #[arg(long)]
+    allow_private_sources: bool,
     /// Also answer on this machine's network address, so a phone or another
     /// computer on the same network can open the web interface.
     ///
@@ -216,6 +225,14 @@ enum VideoCommand {
     /// Publish a file to the network.
     Publish {
         file: PathBuf,
+        /// Where viewers will fetch the file from, e.g.
+        /// `https://videos.example/clip.mp4`.
+        ///
+        /// The network carries the title, tags, thumbnail and the hashes the
+        /// file must match. It does not carry the file: that is served from
+        /// here, and every viewer checks what arrives against the hashes.
+        #[arg(long = "source-url", value_name = "URL")]
+        source_url: String,
         #[arg(long)]
         title: Option<String>,
         #[arg(long, default_value = "")]
@@ -235,15 +252,7 @@ enum VideoCommand {
     /// Show everything known about one video.
     Info { cid: String },
     /// Fetch a video's data from the network.
-    Get {
-        cid: String,
-        /// Where to write the playable file. Defaults to the downloads folder.
-        #[arg(long)]
-        out: Option<PathBuf>,
-        /// Fetch the blocks but do not write a file.
-        #[arg(long)]
-        no_export: bool,
-    },
+    Get { cid: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -401,6 +410,7 @@ async fn start(args: StartArgs, data_dir: PathBuf) -> Result<()> {
     if let Some(locale) = args.locale {
         config.default_locale = Some(locale);
     }
+    config.allow_private_sources = args.allow_private_sources;
     config.api_auth = args
         .ui_auth
         .parse()
@@ -642,6 +652,7 @@ async fn run_client_command(command: Command, data_dir: PathBuf, as_json: bool) 
 
         Command::Video(VideoCommand::Publish {
             file,
+            source_url,
             title,
             description,
             tags,
@@ -654,6 +665,7 @@ async fn run_client_command(command: Command, data_dir: PathBuf, as_json: bool) 
                     "/v1/videos",
                     json!({
                         "path": path,
+                        "sourceUrl": source_url,
                         "title": title,
                         "description": description,
                         "tags": tags,
@@ -702,36 +714,14 @@ async fn run_client_command(command: Command, data_dir: PathBuf, as_json: bool) 
             Box::new(render::video_info),
         ),
 
-        Command::Video(VideoCommand::Get {
-            cid,
-            out,
-            no_export,
-        }) => {
-            println!("Looking for providers…");
-            let value = client
-                .post(&format!("/v1/videos/{cid}/fetch"), json!({}))
-                .await?;
-            let fetched = value.clone();
-            if !no_export {
-                let exported = client
-                    .post(&format!("/v1/videos/{cid}/export"), json!({ "path": out }))
-                    .await?;
-                let path = exported
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                (
-                    value,
-                    Box::new(move |v| {
-                        print_fetch(v);
-                        println!();
-                        println!("Saved to {path}");
-                    }),
-                )
-            } else {
-                (fetched, Box::new(print_fetch))
-            }
+        Command::Video(VideoCommand::Get { cid }) => {
+            println!("Fetching from the creator's server…");
+            (
+                client
+                    .post(&format!("/v1/videos/{cid}/fetch"), json!({}))
+                    .await?,
+                Box::new(print_fetch),
+            )
         }
 
         Command::Search { query, limit } => {
@@ -960,7 +950,14 @@ mod tests {
             vec!["ourvideo", "stop"],
             vec!["ourvideo", "peer", "list"],
             vec!["ourvideo", "peer", "add", "https://video.example.jp"],
-            vec!["ourvideo", "video", "publish", "clip.mp4"],
+            vec![
+                "ourvideo",
+                "video",
+                "publish",
+                "clip.mp4",
+                "--source-url",
+                "https://videos.example/clip.mp4",
+            ],
             vec!["ourvideo", "video", "list"],
             vec!["ourvideo", "video", "info", "bafy..."],
             vec!["ourvideo", "video", "get", "bafy..."],
@@ -970,6 +967,14 @@ mod tests {
         for argv in invocations {
             assert!(Cli::try_parse_from(&argv).is_ok(), "{argv:?}");
         }
+    }
+
+    #[test]
+    fn publishing_without_saying_where_the_file_lives_is_refused() {
+        // The network does not carry the file, so an announcement with nowhere
+        // to fetch it from describes a video nobody can watch. Better to say
+        // so at the command line than to publish one.
+        assert!(Cli::try_parse_from(["ourvideo", "video", "publish", "clip.mp4"]).is_err());
     }
 
     #[test]

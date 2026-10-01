@@ -114,9 +114,16 @@
 
     <div class="card">
       <h2 data-i18n="admin.publish.title"></h2>
+      <p class="hint" data-i18n="admin.publish.lede"></p>
       <div class="field">
         <label for="upload-file" data-i18n="admin.publish.file"></label>
         <input id="upload-file" type="file" accept="video/*,audio/*">
+      </div>
+      <div class="field">
+        <label for="upload-source" data-i18n="admin.publish.sourceUrl"></label>
+        <input id="upload-source" type="url" inputmode="url"
+               data-i18n-placeholder="admin.publish.sourceUrlPlaceholder">
+        <p class="hint" data-i18n="admin.publish.sourceUrlHint"></p>
       </div>
       <div class="field">
         <label for="upload-title" data-i18n="admin.publish.titleField"></label>

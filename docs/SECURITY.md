@@ -176,6 +176,30 @@ The dependency tree is deliberately small and the versions are pinned in
 `Cargo.lock`. Run `cargo audit` before a release. A new dependency in a pull
 request should come with a sentence about why it is worth the added surface.
 
+## Fetching a stranger's URL
+
+An announcement names where its file is served from, and a node fetches it
+because the announcement said to. That is a request made on a viewer's behalf to
+an address a stranger chose, so:
+
+* only `https` and `http` are fetched;
+* a URL whose host is a **literal** loopback, private, link-local or
+  unspecified address is refused, so publishing `http://192.168.0.1/` cannot be
+  used to make strangers' nodes probe their own networks;
+* every hop of a redirect is checked the same way, not just the signed URL;
+* redirects are capped, so a chain cannot be used as a probe either.
+
+**The limit, stated rather than pretended away:** a *hostname* that resolves to
+a private address is not caught. Closing that needs the resolved address at
+connect time, which the HTTP client does not currently expose. On a home network
+the practical consequence is that a node can be made to issue one GET to
+something behind the router and learn whether it answered — not read the
+response, which still has to hash to what the creator signed.
+
+`--allow-private-sources` turns the address check off, for the case it exists
+for: somebody serving to their own household. It re-opens what it was closing,
+which is why it is off by default.
+
 ## Impersonation
 
 What is cryptographically impossible here, and tested:

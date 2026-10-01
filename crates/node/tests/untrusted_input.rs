@@ -75,6 +75,7 @@ fn seeds() -> Vec<Vec<u8>> {
             tags: vec!["gaming".into(), "indie".into()],
             duration_secs: 600,
             thumbnail_cid: Some(ContentId::from_raw(b"thumb")),
+            source_url: "https://videos.example/clip.mp4".to_string(),
         },
         &identity,
     )

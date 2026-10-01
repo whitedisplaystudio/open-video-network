@@ -79,38 +79,30 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
 
 #[tokio::test]
 async fn a_corrupt_block_is_dropped_rather_than_read_back() {
+    // The blocks a node holds are manifests and thumbnails — it does not hold
+    // video. A manifest is what makes a creator's file checkable, so a damaged
+    // one must not be read back and must not be served on.
     let node = spawn_node("keeper").await;
     let file = write_sample_file(node.dir.path(), "clip.bin", 300_000);
-    let report = node
-        .node()
-        .publish_video(
-            &file,
-            Some("Clip".into()),
-            String::new(),
-            vec!["test".into()],
-        )
-        .await
-        .expect("publish");
-    let cid: ContentId = report.video.cid.parse().unwrap();
-    let manifest = node.node().manifest(&cid).unwrap().expect("a manifest");
-    let chunk = manifest.chunks[0];
+    let cid = publish_until_announced(node.node(), &file, "Clip", &["test"]).await;
 
     let blocks = node.dir.path().join("blocks");
-    corrupt_block(&blocks, &chunk);
+    assert!(
+        block_path_exists(&blocks, &cid),
+        "the manifest should be held"
+    );
+    corrupt_block(&blocks, &cid);
 
     // Reading it must not hand back the bytes that are there.
-    let err = node
-        .node()
-        .export_video(cid, Some(node.dir.path().join("out.bin")))
-        .unwrap_err();
+    let err = node.node().manifest(&cid).unwrap_err();
     let message = err.to_string();
     assert!(
-        message.contains(&chunk.to_string()) || message.contains("integrity"),
+        message.contains(&cid.to_string()) || message.contains("integrity"),
         "the error should name the block that failed: {message}"
     );
     // And the file must be gone, so the node does not try to serve it.
     assert!(
-        !block_path_exists(&blocks, &chunk),
+        !block_path_exists(&blocks, &cid),
         "a block that failed its hash should have been deleted"
     );
 
@@ -128,28 +120,14 @@ fn block_path_exists(blocks_dir: &Path, cid: &ContentId) -> bool {
 async fn dropping_a_corrupt_block_also_drops_its_place_in_the_cache() {
     // The bookkeeping has to follow the file. Otherwise the cache keeps
     // charging for bytes that are gone, and the node keeps counting itself a
-    // provider of content it can no longer serve.
+    // provider of a manifest it can no longer hand over.
     let node = spawn_node("accountant").await;
     let file = write_sample_file(node.dir.path(), "clip.bin", 300_000);
-    let report = node
-        .node()
-        .publish_video(
-            &file,
-            Some("Clip".into()),
-            String::new(),
-            vec!["test".into()],
-        )
-        .await
-        .expect("publish");
-    let cid: ContentId = report.video.cid.parse().unwrap();
-    let manifest = node.node().manifest(&cid).unwrap().expect("a manifest");
-    let chunk = manifest.chunks[0];
+    let cid = publish_until_announced(node.node(), &file, "Clip", &["test"]).await;
 
     let before = node.node().status().await.unwrap().cache;
-    corrupt_block(&node.dir.path().join("blocks"), &chunk);
-    let _ = node
-        .node()
-        .export_video(cid, Some(node.dir.path().join("out.bin")));
+    corrupt_block(&node.dir.path().join("blocks"), &cid);
+    let _ = node.node().manifest(&cid);
 
     let after = node.node().status().await.unwrap().cache;
     assert_eq!(
@@ -170,7 +148,10 @@ async fn dropping_a_corrupt_block_also_drops_its_place_in_the_cache() {
 #[tokio::test]
 async fn a_peer_never_receives_a_block_that_does_not_match_its_id() {
     // The strongest promise the block layer makes: whatever happens to the
-    // disk on the serving side, nothing wrong arrives on the other.
+    // disk on the serving side, nothing wrong arrives on the other. The blocks
+    // in question are manifests now, which makes it matter more rather than
+    // less — a manifest is what tells a viewer whether the creator's file is
+    // the file that was announced.
     let server = spawn_node("server").await;
     let client = spawn_node("client").await;
     join_via_share_link(&client, &server).await;
@@ -184,24 +165,19 @@ async fn a_peer_never_receives_a_block_that_does_not_match_its_id() {
     .await
     .expect("the announcement reaches the client");
 
-    let manifest = server.node().manifest(&cid).unwrap().unwrap();
-    for chunk in &manifest.chunks {
-        corrupt_block(&server.dir.path().join("blocks"), chunk);
-    }
+    corrupt_block(&server.dir.path().join("blocks"), &cid);
 
-    // The fetch must fail rather than succeed with the wrong bytes.
-    let outcome = client.node().fetch_video(cid).await;
+    // Asking for it must fail rather than produce a manifest that was not
+    // what the creator signed.
+    let outcome = client.node().prepare_stream(cid).await;
     assert!(
         outcome.is_err(),
-        "fetching from a node whose blocks are all corrupt should fail"
+        "a corrupt manifest must not be handed over as a good one"
     );
-    // And nothing bad may be sitting in the client's store.
-    for chunk in &manifest.chunks {
-        assert!(
-            !block_path_exists(&client.dir.path().join("blocks"), chunk),
-            "the client stored a block it should have rejected"
-        );
-    }
+    assert!(
+        !block_path_exists(&client.dir.path().join("blocks"), &cid),
+        "the client stored a block it should have rejected"
+    );
 
     client.shutdown().await;
     server.shutdown().await;
@@ -228,6 +204,7 @@ async fn deleting_the_block_directory_by_hand_does_not_stop_the_node() {
             Some("Clip".into()),
             String::new(),
             vec!["test".into()],
+            "https://videos.example/clip.mp4".to_string(),
         )
         .await
         .expect("publish");
@@ -280,11 +257,11 @@ async fn the_diagnosis_finds_a_corrupt_block() {
             Some("Clip".into()),
             String::new(),
             vec!["test".into()],
+            "https://videos.example/clip.mp4".to_string(),
         )
         .await
         .expect("publish");
     let cid: ContentId = report.video.cid.parse().unwrap();
-    let chunk = node.node().manifest(&cid).unwrap().unwrap().chunks[0];
 
     let healthy = diagnose(node.dir.path()).await;
     assert_eq!(
@@ -294,13 +271,13 @@ async fn the_diagnosis_finds_a_corrupt_block() {
         check(&healthy, "block integrity")
     );
 
-    corrupt_block(&node.dir.path().join("blocks"), &chunk);
+    corrupt_block(&node.dir.path().join("blocks"), &cid);
 
     let sick = diagnose(node.dir.path()).await;
     let integrity = check(&sick, "block integrity");
     assert_eq!(integrity.severity, Severity::Problem, "{integrity:?}");
     assert!(
-        integrity.detail.contains(&chunk.to_string()),
+        integrity.detail.contains(&cid.to_string()),
         "the finding should name a block: {integrity:?}"
     );
     assert!(!sick.is_healthy());
@@ -394,6 +371,7 @@ async fn a_healthy_node_passes_its_own_diagnosis() {
             Some("Clip".into()),
             String::new(),
             vec!["test".into()],
+            "https://videos.example/clip.mp4".to_string(),
         )
         .await
         .expect("publish");

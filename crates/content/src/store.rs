@@ -223,11 +223,31 @@ impl BlockStore {
         Ok(out)
     }
 
+    /// Hash a file into a manifest without storing its contents.
+    ///
+    /// This is what publishing does now. The network carries what is needed to
+    /// find a video and to check it — title, tags, thumbnail, and this
+    /// manifest, which says what every chunk of the file must hash to. It does
+    /// not carry the file. That comes from the creator's own server.
+    ///
+    /// The chunk hashes are therefore not addresses any more; they are the
+    /// promise that the bytes which arrive are the bytes that were announced.
+    /// A creator who later swaps the file on their server breaks the hash and
+    /// every viewer notices.
+    pub fn manifest_for_file(&self, path: impl AsRef<Path>) -> Result<ImportedVideo> {
+        self.read_into_manifest(path.as_ref(), false)
+    }
+
     /// Split a file into chunks, store them and the manifest, and return the
-    /// video's id. This is the whole of `ourvideo video publish <FILE>` on the
-    /// storage side.
+    /// video's id.
+    ///
+    /// Still used for the manifest and for anything a node genuinely holds;
+    /// publishing uses [`BlockStore::manifest_for_file`] instead.
     pub fn import_file(&self, path: impl AsRef<Path>) -> Result<ImportedVideo> {
-        let path = path.as_ref();
+        self.read_into_manifest(path.as_ref(), true)
+    }
+
+    fn read_into_manifest(&self, path: &Path, store_chunks: bool) -> Result<ImportedVideo> {
         let meta = fs::metadata(path).map_err(io_err(path))?;
         if meta.len() == 0 {
             return Err(ContentError::EmptyFile);
@@ -252,7 +272,12 @@ impl BlockStore {
                 break;
             }
             total += filled as u64;
-            chunks.push(self.put_raw(&buffer[..filled])?);
+            let chunk = &buffer[..filled];
+            chunks.push(if store_chunks {
+                self.put_raw(chunk)?
+            } else {
+                ContentId::from_raw(chunk)
+            });
             if filled < CHUNK_SIZE {
                 break;
             }
@@ -275,7 +300,8 @@ impl BlockStore {
             cid = %content_id,
             chunks = manifest.chunks.len(),
             bytes = total,
-            "imported file into the block store"
+            stored = store_chunks,
+            "hashed a file into a manifest"
         );
         Ok(ImportedVideo {
             content_id,
