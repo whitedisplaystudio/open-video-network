@@ -643,12 +643,11 @@ async fn blocking_a_creator_discards_everything_of_theirs() {
         origins.push(origin);
     }
 
-    let viewer_node = viewer.node().clone();
-    wait_until(PROPAGATION_TIMEOUT, || {
-        viewer_node.database().video_count().unwrap_or(0) == 2
-    })
-    .await
-    .expect("both announcements should arrive");
+    // Setup, not subject: ask rather than wait, so a slow machine cannot turn
+    // this into a flake. What this test is about is what blocking does.
+    pull_until_discovered(&[viewer.node()], &publisher.node().public_key(), 2)
+        .await
+        .expect("both videos should reach the viewer");
 
     for cid in &cids {
         viewer.node().prepare_stream(*cid).await.expect("a plan");
@@ -702,12 +701,11 @@ async fn blocking_one_video_leaves_another_alone() {
     )
     .await;
 
-    let viewer_node = viewer.node().clone();
-    wait_until(PROPAGATION_TIMEOUT, || {
-        viewer_node.database().video_count().unwrap_or(0) == 2
-    })
-    .await
-    .expect("both announcements should arrive");
+    // Setup, not subject: ask rather than wait, so a slow machine cannot turn
+    // this into a flake. What this test is about is what blocking does.
+    pull_until_discovered(&[viewer.node()], &publisher.node().public_key(), 2)
+        .await
+        .expect("both videos should reach the viewer");
 
     for cid in [unwanted, wanted] {
         viewer.node().prepare_stream(cid).await.expect("a plan");

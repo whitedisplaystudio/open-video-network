@@ -145,9 +145,14 @@ ourvideo peer add https://video.example.jp  # または URL
 ### 投稿と視聴
 
 ```bash
-ourvideo video publish holiday.mp4 --title "旅行" --tag travel --tag family
+# 公開には配信場所が必要です。ファイルはハッシュとサムネイルのために読むだけで、
+# 本体は --source-url から視聴者が取得します。
+ourvideo video publish holiday.mp4 \
+  --source-url https://videos.example/holiday.mp4 \
+  --title "旅行" --tag travel --tag family
+
 ourvideo video list
-ourvideo video get <CID>          # P2P で取得して再生可能なファイルを保存
+ourvideo video get <CID>          # 配信元から取得し、検証しながらファイルを保存
                                   # （UI ではダウンロードせずストリーミング再生します）
 ourvideo search 旅行               # ローカル検索。クエリは端末から出ません
 ourvideo watch <CID> --seconds 120 --completed
@@ -171,7 +176,7 @@ ourvideo recommendation explain <CID>   # なぜその順位なのか
 `start` には `--locale ja` で表示言語を固定できます（環境変数 `OURVIDEO_LOCALE` も可）。
 `--ui-auth none` を付けると、Web 画面がサインインなしの固定 URL で開けます（下記の注意点を参照）。
 | `ourvideo peer list` / `add` / `remove` | Peer の一覧・追加・削除 |
-| `ourvideo video publish <FILE>` | Chunk 分割・CID 化・署名・Announcement |
+| `ourvideo video publish <FILE> --source-url <URL>` | ハッシュ計算・署名・配信場所の告知 |
 | `ourvideo video list [--local]` | 発見済み動画 / 自分が投稿した動画 |
 | `ourvideo video info <CID>` | 1本の詳細 |
 | `ourvideo video get <CID>` | データ取得と書き出し |

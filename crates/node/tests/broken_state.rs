@@ -159,11 +159,10 @@ async fn a_peer_never_receives_a_block_that_does_not_match_its_id() {
     let file = write_sample_file(server.dir.path(), "clip.bin", 300_000);
     let cid = publish_until_announced(server.node(), &file, "Clip", &["test"]).await;
 
-    wait_until(PROPAGATION_TIMEOUT, || {
-        client.node().video(&cid).ok().flatten().is_some()
-    })
-    .await
-    .expect("the announcement reaches the client");
+    // Setup: the subject here is what happens to a damaged manifest.
+    pull_until_discovered(&[client.node()], &server.node().public_key(), 1)
+        .await
+        .expect("the video should reach the client");
 
     corrupt_block(&server.dir.path().join("blocks"), &cid);
 

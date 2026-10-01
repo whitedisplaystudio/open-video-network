@@ -150,12 +150,11 @@ async fn watching_intensively_tells_the_other_peer_nothing() {
         cids.push(ContentId::parse(&report.video.cid).unwrap());
     }
 
-    let viewer_node = viewer.node().clone();
-    wait_until(PROPAGATION_TIMEOUT, || {
-        viewer_node.database().video_count().unwrap_or(0) == 3
-    })
-    .await
-    .expect("announcements should arrive");
+    // Setup, not subject: this test is about what a peer learns from somebody
+    // watching, so getting the videos there should not depend on gossip timing.
+    pull_until_discovered(&[viewer.node()], &publisher.node().public_key(), 3)
+        .await
+        .expect("all three videos should reach the viewer");
 
     // The viewer watches, likes and skips — the full range of signals.
     for (index, cid) in cids.iter().enumerate() {

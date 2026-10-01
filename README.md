@@ -160,9 +160,14 @@ stop working without affecting you.
 ### Publish and watch
 
 ```bash
-ourvideo video publish holiday.mp4 --title "Holiday" --tag travel --tag family
+# Publishing needs somewhere to serve from. The file is read to hash it and
+# take a thumbnail; viewers fetch it from --source-url.
+ourvideo video publish holiday.mp4 \
+  --source-url https://videos.example/holiday.mp4 \
+  --title "Holiday" --tag travel --tag family
 ourvideo video list
-ourvideo video get <CID>          # fetch from the network and save a playable file
+ourvideo video get <CID>          # fetch from the creator's server, verifying,
+                                  # and save a playable file
                                   # (the UI streams instead, without downloading first)
 ourvideo search holiday           # searched locally; the query never leaves
 ourvideo watch <CID> --seconds 120 --completed
