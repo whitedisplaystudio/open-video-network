@@ -351,9 +351,18 @@ async fn test_f_two_viewers_with_different_habits_get_different_feeds() {
         published.push((name, cid));
     }
 
-    wait_until_all_discovered(publisher.node(), &[bob.node(), carol.node()], 4)
-        .await
-        .expect("all four announcements should arrive");
+    // Discovery is this test's setup, not its subject — what it checks is that
+    // two viewers end up with different feeds. So the videos are pulled rather
+    // than waited for: asking a peer what a creator published either works or
+    // says why, where waiting on gossip is a timing assumption that a slow
+    // machine turns into a flake.
+    pull_until_discovered(
+        &[bob.node(), carol.node()],
+        &publisher.node().public_key(),
+        4,
+    )
+    .await
+    .expect("all four videos should reach both viewers");
 
     // Bob watches games; Carol watches music. Neither tells anyone.
     let game_one = published.iter().find(|(n, _)| *n == "game-one").unwrap().1;

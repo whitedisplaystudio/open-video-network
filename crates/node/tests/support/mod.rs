@@ -173,32 +173,37 @@ pub async fn join_via_share_link(from: &TestNode, to: &TestNode) {
         .expect("joining through a share link");
 }
 
-/// Wait until every viewer knows `expected` videos, re-announcing while
-/// waiting.
+/// Get a creator's videos to each viewer by asking for them, rather than by
+/// waiting for gossip to deliver them.
 ///
-/// `publish_video` reports success when gossipsub accepted the message, which
-/// is not the same as it having been delivered: a mesh that is still forming
-/// can accept a publish and pass it to nobody. Waiting longer does not fix
-/// that, because the message is already gone. Saying it again does, and it is
-/// what the node itself does on reconnect.
-pub async fn wait_until_all_discovered(
-    publisher: &ovn_node::Node,
+/// For a test whose subject is discovery, waiting is the point. For a test that
+/// only needs the videos to be *there* before it can begin, waiting is a
+/// timing assumption, and a slow runner turns it into a flake — which is
+/// exactly what happened to Test F on Windows twice. A channel request is a
+/// pull: it dials, asks, and gets signed announcements back, so it either
+/// works or reports why.
+pub async fn pull_until_discovered(
     viewers: &[&ovn_node::Node],
+    creator: &ovn_identity::PublicKey,
     expected: i64,
 ) -> Result<(), &'static str> {
     let deadline = tokio::time::Instant::now() + PROPAGATION_TIMEOUT;
     loop {
-        let everyone_has_them = viewers
-            .iter()
-            .all(|node| node.database().video_count().unwrap_or(0) >= expected);
-        if everyone_has_them {
+        let mut all_have_them = true;
+        for viewer in viewers {
+            if viewer.database().video_count().unwrap_or(0) >= expected {
+                continue;
+            }
+            all_have_them = false;
+            let _ = viewer.refresh_channel(creator).await;
+        }
+        if all_have_them {
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
             return Err("timed out");
         }
-        let _ = publisher.reannounce().await;
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
