@@ -621,6 +621,12 @@ These are deliberate, and listed in the design document rather than hidden:
   staying up.
 * **The command line is English only.** The web interface is translated; the
   CLI's own output and help text are not, yet.
+* **There is no phone app.** A phone can open the web interface of a node
+  running on a computer — on the same network with `--lan`, or from anywhere
+  over a VPN — but it cannot be a node itself. Running one on a phone is the
+  architecturally right answer rather than remote-controlling a desktop, and it
+  is a V1.5 candidate: it needs mobile builds, and the background-execution and
+  battery rules are the real work, not the networking.
 
 ---
 
