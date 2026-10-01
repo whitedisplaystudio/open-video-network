@@ -333,14 +333,9 @@ async fn test_f_two_viewers_with_different_habits_get_different_feeds() {
         published.push((name, cid));
     }
 
-    for viewer in [&bob, &carol] {
-        let node = viewer.node().clone();
-        wait_until(PROPAGATION_TIMEOUT, || {
-            node.database().video_count().unwrap_or(0) == 4
-        })
+    wait_until_all_discovered(publisher.node(), &[bob.node(), carol.node()], 4)
         .await
         .expect("all four announcements should arrive");
-    }
 
     // Bob watches games; Carol watches music. Neither tells anyone.
     let game_one = published.iter().find(|(n, _)| *n == "game-one").unwrap().1;

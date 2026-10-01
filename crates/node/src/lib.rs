@@ -213,6 +213,14 @@ pub async fn start(config: NodeConfig) -> Result<RunningNode> {
             Ok(_) => {}
             Err(e) => tracing::warn!(error = %e, "could not re-announce held content"),
         }
+        // And gossip our own videos again. A peer that was not connected when
+        // they were first announced has no way to learn of them otherwise: it
+        // cannot look up a content id it has never seen.
+        match joining.reannounce().await {
+            Ok(n) if n > 0 => tracing::info!(count = n, "re-announced our own videos"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "could not re-announce our own videos"),
+        }
         // Offer to answer about the creators we hold anything by, so that a
         // subscriber can find their work while they are offline.
         let channels = joining.announce_channels_held().await;

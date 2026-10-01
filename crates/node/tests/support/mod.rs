@@ -161,4 +161,33 @@ pub async fn join_via_share_link(from: &TestNode, to: &TestNode) {
         .expect("joining through a share link");
 }
 
+/// Wait until every viewer knows `expected` videos, re-announcing while
+/// waiting.
+///
+/// `publish_video` reports success when gossipsub accepted the message, which
+/// is not the same as it having been delivered: a mesh that is still forming
+/// can accept a publish and pass it to nobody. Waiting longer does not fix
+/// that, because the message is already gone. Saying it again does, and it is
+/// what the node itself does on reconnect.
+pub async fn wait_until_all_discovered(
+    publisher: &ovn_node::Node,
+    viewers: &[&ovn_node::Node],
+    expected: i64,
+) -> Result<(), &'static str> {
+    let deadline = tokio::time::Instant::now() + PROPAGATION_TIMEOUT;
+    loop {
+        let everyone_has_them = viewers
+            .iter()
+            .all(|node| node.database().video_count().unwrap_or(0) >= expected);
+        if everyone_has_them {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("timed out");
+        }
+        let _ = publisher.reannounce().await;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+}
+
 pub const PROPAGATION_TIMEOUT: Duration = Duration::from_secs(20);

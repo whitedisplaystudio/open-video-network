@@ -1407,6 +1407,38 @@ impl Node {
         Ok(count)
     }
 
+    /// Gossip our own announcements again.
+    ///
+    /// [`Node::reprovide`] re-registers DHT provider records, which is how
+    /// somebody who already knows a content id finds a copy. It does nothing
+    /// for discovery: a peer that was not connected when a video was
+    /// announced never heard of it, and cannot look up an id it does not have.
+    ///
+    /// Re-announcing costs nothing — the content is already imported, the id
+    /// is unchanged, and a duplicate is recognised and dropped by whoever
+    /// already has it — so the honest thing is to say it again rather than
+    /// assume the one time was heard.
+    pub async fn reannounce(&self) -> Result<usize> {
+        let mut sent = 0;
+        for video in self.inner.db.local_videos()? {
+            let Ok(cid) = ContentId::parse(&video.cid) else {
+                continue;
+            };
+            let Some(bytes) = self.inner.db.announcement_bytes(&cid)? else {
+                continue;
+            };
+            match self.inner.network.publish_announcement(bytes).await {
+                Ok(()) => sent += 1,
+                // Nobody subscribed yet. Not an error: there is simply nobody
+                // to tell, and the next caller will try again.
+                Err(e) => {
+                    tracing::debug!(%cid, error = %e, "could not re-announce yet");
+                }
+            }
+        }
+        Ok(sent)
+    }
+
     pub async fn shutdown(&self) -> Result<()> {
         let _ = std::fs::remove_file(self.inner.config.runtime_path());
         self.inner.network.shutdown().await?;
