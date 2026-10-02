@@ -889,10 +889,11 @@ async fn an_empty_upload_is_refused() {
     node.shutdown().await;
 }
 
-/// Section 13 of the AGPL: a user who interacts with the program over a
-/// network must be offered its Corresponding Source. For this node the
-/// interaction is the web interface, so the offer has to be reachable by
-/// anyone who can reach the pages — which means outside the token.
+/// Credit has to be reachable. Section 4 of the Apache License asks the
+/// copyright notice, the licence and the contents of `NOTICE` to travel with
+/// any distribution, and the web interface is where this build carries that.
+/// Anyone who can reach the pages can see whose work it is, which means the
+/// answer sits outside the token.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_source_offer_is_reachable_without_signing_in() {
     let node = spawn_node_with("licensed", |config| {
@@ -921,7 +922,7 @@ async fn the_source_offer_is_reachable_without_signing_in() {
     );
     let licence = about["licence"].as_str().unwrap_or_default();
     assert!(
-        licence.contains("AGPL"),
+        licence.contains("Apache"),
         "the node should name the licence it is under, not a different one: {licence:?}"
     );
     assert!(!about["version"].as_str().unwrap_or_default().is_empty());

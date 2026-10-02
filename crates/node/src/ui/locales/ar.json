@@ -258,7 +258,7 @@
     "admin.peers.known_two": "{count} معروفان",
     "admin.peers.known_few": "{count} معروفة",
     "admin.peers.known_many": "{count} معروفًا",
-    "footer.licence": "برمجية حرة بموجب رخصة AGPL الإصدار 3 أو أحدث.",
+    "footer.licence": "برمجية حرة بموجب رخصة Apache الإصدار 2.0.",
     "footer.source": "الشيفرة المصدرية",
     "footer.build": "v{version} · {licence}",
     "nav.channels": "القنوات",

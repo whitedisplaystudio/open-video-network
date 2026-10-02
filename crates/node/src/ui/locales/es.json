@@ -243,7 +243,7 @@
     "admin.log.fetchFailed": "fallo al descargar {cid}: {error}",
     "error.unauthorised": "Esta página no está autorizada. Ejecuta `ourvideo ui` y abre el enlace que muestra.",
     "error.unexpected": "El nodo respondió algo inesperado.",
-    "footer.licence": "Software libre bajo la AGPL v3 o posterior.",
+    "footer.licence": "Software libre bajo la Apache License 2.0.",
     "footer.source": "Código fuente",
     "footer.build": "v{version} · {licence}",
     "nav.channels": "Canales",

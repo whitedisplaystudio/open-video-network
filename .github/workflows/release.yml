@@ -69,9 +69,11 @@ jobs:
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/ourvideo dist/
-          # The AGPL travels with the binary, and so does the trademark
-          # policy: somebody who forks this needs to know to rename it.
-          cp README.md README.ja.md LICENSE TRADEMARK.md dist/
+          # Section 4 of the licence asks for the notice to travel with any
+          # distribution, so NOTICE ships beside LICENSE rather than being
+          # left in the repository. The trademark policy goes too: somebody
+          # who forks this needs to know to rename it.
+          cp README.md README.ja.md LICENSE NOTICE TRADEMARK.md dist/
           tar -czf ${{ matrix.name }}.tar.gz -C dist .
           shasum -a 256 ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
 
@@ -81,7 +83,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target/${{ matrix.target }}/release/ourvideo.exe dist/
-          Copy-Item README.md, README.ja.md, LICENSE, TRADEMARK.md dist/
+          Copy-Item README.md, README.ja.md, LICENSE, NOTICE, TRADEMARK.md dist/
           Compress-Archive -Path dist/* -DestinationPath ${{ matrix.name }}.zip
           (Get-FileHash ${{ matrix.name }}.zip -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.name }}.zip" `
             | Out-File -Encoding ascii ${{ matrix.name }}.zip.sha256

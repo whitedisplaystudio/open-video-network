@@ -144,9 +144,11 @@ fn router(node: Node) -> Router {
         // Public: this is what a URL hands to a newcomer.
         .route(ovn_protocol::WELL_KNOWN_DESCRIPTOR_PATH, get(descriptor))
         .route("/health", get(health))
-        // Where this build's source is. Section 13 of the AGPL requires that a
-        // user who reaches the program over a network be offered it, so it sits
-        // outside the token like the pages do.
+        // What this build is, which licence it is under, and where its source
+        // is. Section 4 of the Apache License asks for the credit to travel
+        // with the software; this is how the interface carries it. Outside the
+        // token, because somebody who can see the pages should be able to see
+        // whose work they are looking at.
         .route("/v1/about", get(about))
         // The web UI. The pages themselves hold no data — everything they
         // show comes from /v1, which is authenticated — so they are served
@@ -257,9 +259,9 @@ async fn health() -> &'static str {
 /// What this build is and where its source lives.
 ///
 /// Read from the crate metadata rather than written out here, so that a fork
-/// which changes `repository` in `Cargo.toml` — as the AGPL requires it to,
-/// once it has modified anything — gets a correct notice for free instead of
-/// shipping ours.
+/// which changes `repository` in `Cargo.toml` points at its own source instead
+/// of shipping ours. The licence asks a derivative to state that it is one;
+/// this makes the honest answer the default.
 async fn about() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),

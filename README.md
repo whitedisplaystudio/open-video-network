@@ -692,12 +692,19 @@ is a perfectly good pull request. See
 
 ### Licence
 
-The code is under the [GNU Affero General Public License v3 or later](LICENSE).
+The code is under the [Apache License 2.0](LICENSE).
 
-Free to use, free to modify, no payment and no permission needed. The one
-condition: if you distribute a modified version, or run one as a service other
-people reach over a network, you have to publish your full source under the
-same licence. Nobody can take this, close it, and sell it back.
+Copy it, change it, build something closed on it, sell it. No payment, no
+permission, no obligation to publish anything back. **The one condition is
+credit**: section 4 requires the copyright notice, the licence, and the contents
+of [`NOTICE`](NOTICE) to travel with any distribution, and requires significant
+changes to be stated. So a derivative can be anything at all, but it cannot
+quietly become somebody else's work.
+
+Apache rather than MIT for two things MIT leaves out: an explicit patent grant
+from everyone who contributes, which matters in a project built on networking
+and codecs, and an explicit statement that the licence grants no trademark
+rights.
 
 **The protocol is not under that licence.** The wire format in
 [`protocol/SPECIFICATION.md`](protocol/SPECIFICATION.md) is

@@ -88,10 +88,14 @@ Do not open a public issue for a vulnerability. See
 
 ## Licence
 
-The project is licensed under the [GNU Affero General Public License, version 3
-or later](LICENSE). By opening a pull request you agree that your contribution
-is licensed on those same terms — inbound matches outbound, so there is no
-separate agreement to sign and no copyright assignment.
+The project is licensed under the [Apache License 2.0](LICENSE). By opening a
+pull request you agree that your contribution is licensed on those same terms —
+inbound matches outbound, so there is no separate agreement to sign and no
+copyright assignment.
+
+Apache-2.0 includes an explicit patent grant, which is part of what you are
+agreeing to: you licence any patent claims you hold that your contribution
+would otherwise infringe.
 
 Add a `Signed-off-by` line to each commit, which is the
 [Developer Certificate of Origin](https://developercertificate.org/): it says

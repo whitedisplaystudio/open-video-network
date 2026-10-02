@@ -17,9 +17,10 @@ permission to implement what it describes:
 **Anyone may implement this protocol, in any language, under any licence, open
 source or not, without asking and without owing anything to this project.**
 
-The reference implementation is under the AGPL. That licence applies to *that
-code*. It does not reach an independent implementation written from this
-document, and it is not meant to.
+The reference implementation is under the Apache License, which already permits
+reuse of the code itself. This paragraph is here for the case that licence does
+not cover: an implementation written from this document alone, by someone who
+never touched that code.
 
 This is not generosity. Principle 1 says the network must not depend on any
 particular person or organisation, and a protocol that only one codebase is

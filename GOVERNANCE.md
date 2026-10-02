@@ -84,8 +84,15 @@ a fork that implements this protocol is not even a separate network: nodes
 from both still talk to each other. That is intended. It is the practical
 limit on how much any governance structure here can matter.
 
-Two things come with it. The [AGPL](LICENSE) means a fork is still free
-software: whoever receives it can read it and fork it again, which is what stops
-a fork from becoming somebody's closed product. And [`TRADEMARK.md`](TRADEMARK.md)
-asks a modified fork to take its own name — not to slow anyone down, but so that
-a user handed a build can tell whose it is.
+Two things come with it. The [Apache License](LICENSE) asks a fork to carry the
+credit: section 4 requires the copyright notice, the licence, and the contents
+of [`NOTICE`](NOTICE) to travel with any distribution, and requires significant
+changes to be stated. And [`TRADEMARK.md`](TRADEMARK.md) asks a modified fork to
+take its own name — not to slow anyone down, but so that a user handed a build
+can tell whose it is.
+
+What the licence does not do is stop a fork being closed. That was a deliberate
+choice: a copyleft licence would have prevented it, at the cost of making the
+code unusable by anyone whose employer forbids copyleft and awkward to ship in
+an app store. Credit travelling with the code was judged worth more here than
+compelling the code to stay open.

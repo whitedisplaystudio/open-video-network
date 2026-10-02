@@ -75,7 +75,7 @@ language name and code for each of `es`, `pt`, `ar`:
 > take the whole file, and you do not have to finish what you start.
 >
 > Background: [`docs/TRANSLATING.md`](../docs/TRANSLATING.md). Contributions are
-> under the AGPL with a DCO sign-off (`git commit -s`) — no CLA, no copyright
+> under Apache-2.0 with a DCO sign-off (`git commit -s`) — no CLA, no copyright
 > assignment.
 
 ### Aggregators

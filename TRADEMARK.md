@@ -4,8 +4,9 @@ The licence covers the code. This covers the name.
 
 **Open Video Network**, **ourvideo**, and the project's logos and other visual
 marks are trademarks of the project. Nothing in the
-[AGPL](LICENSE) grants any right to use them: section 7(e) of that licence
-says so explicitly, and this document says what is and is not allowed.
+[Apache License](LICENSE) grants any right to use them: section 6 of that
+licence says so explicitly, and this document says what is and is not
+allowed.
 
 The point is narrow. Anyone may take this code and do anything the licence
 permits — that freedom is the licence's job and this document does not touch
