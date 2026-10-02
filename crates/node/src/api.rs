@@ -816,11 +816,16 @@ async fn stream_video(
         ));
     }
 
-    // A HEAD is how a player asks for the length before it asks for bytes.
+    // A HEAD is how a player asks for the length before it asks for bytes, and
+    // it should not cost a fetch from the creator's server.
     let body = if method == axum::http::Method::HEAD {
         Body::empty()
     } else {
-        Body::from_stream(node.stream_range(plan, range))
+        // The first chunk is fetched before the status line is written. Once
+        // the headers are out a failure can only be a truncated body, and a
+        // video whose server is serving the wrong bytes would otherwise look
+        // like an empty file with a `200`.
+        Body::from_stream(node.begin_stream(plan, range).await?)
     };
 
     let mut response = Response::new(body);
@@ -1026,6 +1031,12 @@ impl IntoResponse for ApiError {
                 StatusCode::SERVICE_UNAVAILABLE
             }
             NodeError::BlockUnavailable { .. } => StatusCode::BAD_GATEWAY,
+            // The fault is upstream: the creator's server did not answer, or
+            // answered with something other than what they signed. Reporting
+            // that as this node's own failure would send people looking in the
+            // wrong place.
+            NodeError::Origin { .. } | NodeError::OriginTampered { .. } => StatusCode::BAD_GATEWAY,
+            NodeError::NoSource(_) => StatusCode::NOT_FOUND,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let body = Json(serde_json::json!({ "error": self.0.to_string() }));

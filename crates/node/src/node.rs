@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use futures::StreamExt;
 use libp2p::Multiaddr;
 
 use ovn_content::{
@@ -107,6 +108,18 @@ pub struct PublishReport {
     /// False when there was nobody to gossip to yet. The video is still
     /// published locally and discoverable through the DHT.
     pub announced_to_network: bool,
+}
+
+/// Cut a chunk down to the part of it the request asked for.
+///
+/// Only the first and last chunk of a range are ever trimmed; the ones between
+/// come back whole. Shared so that a chunk fetched eagerly and one arriving
+/// through the stream are cut the same way.
+fn trim_to_range(data: &[u8], index: usize, chunk_size: u64, range: &ByteRange) -> Vec<u8> {
+    let chunk_start = index as u64 * chunk_size;
+    let from = range.start.saturating_sub(chunk_start) as usize;
+    let to = ((range.end - chunk_start + 1) as usize).min(data.len());
+    data.get(from..to).unwrap_or_default().to_vec()
 }
 
 /// Where a streaming response has got to, and what is already on its way.
@@ -1135,14 +1148,61 @@ impl Node {
     /// already paid for by the time it is needed. A chunk that cannot be
     /// fetched ends the stream with an error, which the player sees as a
     /// truncated response.
+    /// Begin a streaming response, having already fetched its first chunk.
+    ///
+    /// The status line goes out before the body, so a failure discovered after
+    /// that cannot be reported as one: a verification failure on the first
+    /// chunk used to look like an empty file with a `200`. Fetching the first
+    /// chunk before answering costs nothing — the first byte has to be fetched
+    /// before it can be sent either way — and turns that into a reportable
+    /// error.
+    ///
+    /// Anything that fails later is still a truncated response. Nothing can be
+    /// done about that over HTTP, and it is what a player already copes with.
+    pub async fn begin_stream(
+        &self,
+        plan: StreamPlan,
+        range: ByteRange,
+    ) -> Result<impl futures::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Send>
+    {
+        let chunk_size = plan.manifest.chunk_size as u64;
+        let first = *range.chunk_indices(chunk_size).start();
+        let cid = plan
+            .manifest
+            .chunks
+            .get(first)
+            .copied()
+            .ok_or_else(|| NodeError::NoSource(plan.cid.to_string()))?;
+
+        let head = trim_to_range(
+            &self.chunk_for_stream(cid, &plan, first).await?,
+            first,
+            chunk_size,
+            &range,
+        );
+        let rest = self.stream_range_from(plan, range, first + 1);
+        Ok(futures::stream::once(async move { Ok(head) }).chain(rest))
+    }
+
     pub fn stream_range(
         &self,
         plan: StreamPlan,
         range: ByteRange,
     ) -> impl futures::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Send {
+        let first = *range.chunk_indices(plan.manifest.chunk_size as u64).start();
+        self.stream_range_from(plan, range, first)
+    }
+
+    /// The part of a range from `from_index` onward.
+    fn stream_range_from(
+        &self,
+        plan: StreamPlan,
+        range: ByteRange,
+        from_index: usize,
+    ) -> impl futures::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Send {
         let chunk_size = plan.manifest.chunk_size as u64;
-        let indices = range.chunk_indices(chunk_size);
-        let (first, last) = (*indices.start(), *indices.end());
+        let last = *range.chunk_indices(chunk_size).end();
+        let first = from_index;
 
         let state = StreamState {
             node: self.clone(),
@@ -1172,11 +1232,7 @@ impl Node {
                 }
             };
 
-            // Trim the first and last chunks to the requested range.
-            let chunk_start = state.next_to_emit as u64 * state.chunk_size;
-            let from = state.range.start.saturating_sub(chunk_start) as usize;
-            let to = ((state.range.end - chunk_start + 1) as usize).min(data.len());
-            let slice = data.get(from..to).unwrap_or_default().to_vec();
+            let slice = trim_to_range(&data, state.next_to_emit, state.chunk_size, &state.range);
             state.next_to_emit += 1;
             Some((Ok(slice), state))
         })

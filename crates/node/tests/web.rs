@@ -229,9 +229,14 @@ async fn an_unknown_media_type_is_served_as_opaque_bytes() {
     // The media type comes out of a manifest a stranger wrote, and the
     // response is same-origin with the UI. Anything unrecognised must not be
     // echoed back as a content type a browser would execute.
-    let node = spawn_node("streamer").await;
+    // Served from a real origin, because the headers are only written once the
+    // first chunk has come back — so a test that cannot fetch would never see
+    // the content type it is checking.
+    let node = spawn_node_fetching_locally("streamer").await;
     let source = write_sample_file(node.dir.path(), "payload.html", 500);
-    let cid = publish(node.node(), &source, "Suspicious").await;
+    let body = std::fs::read(&source).unwrap();
+    let origin = OriginServer::serving(body).await;
+    let cid = publish_served(node.node(), &source, "Suspicious", &origin.base_url).await;
     let client = Client::new(&node);
 
     let response = client
@@ -239,6 +244,7 @@ async fn an_unknown_media_type_is_served_as_opaque_bytes() {
         .send()
         .await
         .unwrap();
+    assert_eq!(response.status(), 200);
     assert_eq!(
         response.headers()["content-type"],
         "application/octet-stream"
@@ -1014,6 +1020,98 @@ async fn a_hostname_is_refused_even_when_the_node_is_on_the_network() {
         .await
         .expect("request");
     assert_eq!(no_token.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_serving_the_wrong_bytes_is_an_error_not_an_empty_success() {
+    // The status line goes out before the body, so anything discovered after
+    // it can only be a truncated response. That used to include the very first
+    // chunk, which made a video whose server was serving something else look
+    // like an empty file with a `200`.
+    let node = spawn_node_fetching_locally("suspicious").await;
+    let source = write_sample_file(node.dir.path(), "clip.mp4", 2 * 1024 * 1024);
+    let body = std::fs::read(&source).unwrap();
+    let origin = OriginServer::serving_with(
+        body.clone(),
+        OriginBehaviour {
+            corrupt: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let cid = publish_served(node.node(), &source, "Clip", &origin.base_url).await;
+    let client = Client::new(&node);
+
+    let response = client
+        .authed(&format!("/v1/videos/{cid}/stream"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        502,
+        "a server serving something other than what was signed is an upstream fault"
+    );
+
+    // A range request lands in the same place.
+    let partial = client
+        .authed(&format!("/v1/videos/{cid}/stream"))
+        .header("Range", "bytes=0-1023")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(partial.status(), 502);
+
+    // And a HEAD still answers, because it asks for the length rather than
+    // for bytes and should not need the server at all.
+    let head = client
+        .http
+        .head(format!("{}/v1/videos/{cid}/stream", client.base))
+        .bearer_auth(&client.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 200);
+    assert_eq!(
+        head.headers()["content-length"],
+        body.len().to_string().as_str()
+    );
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_good_server_still_streams_every_byte() {
+    // The eager first chunk must not change what arrives.
+    let (node, _origin, cid, body) = streaming_fixture("honest", 2 * 1024 * 1024 + 99).await;
+    let client = Client::new(&node);
+
+    let whole = client
+        .authed(&format!("/v1/videos/{cid}/stream"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(whole.status(), 200);
+    assert_eq!(whole.bytes().await.unwrap().as_ref(), body.as_slice());
+
+    // Including a range that starts inside a later chunk, where the eager
+    // fetch is not chunk zero.
+    let tail = client
+        .authed(&format!("/v1/videos/{cid}/stream"))
+        .header(
+            "Range",
+            format!("bytes={}-{}", 1024 * 1024 + 5, body.len() - 1),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(tail.status(), 206);
+    assert_eq!(
+        tail.bytes().await.unwrap().as_ref(),
+        &body[1024 * 1024 + 5..]
+    );
 
     node.shutdown().await;
 }
