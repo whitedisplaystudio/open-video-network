@@ -706,6 +706,11 @@ from everyone who contributes, which matters in a project built on networking
 and codecs, and an explicit statement that the licence grants no trademark
 rights.
 
+**This changed after the first release.** `v0.1.0` was published under the
+AGPL. Everything from **`v0.1.1` onward is Apache-2.0**. A release that has gone
+out cannot be withdrawn, so anyone who took `v0.1.0` keeps it on those terms;
+there is nothing to do about that and nothing hidden about it either.
+
 **The protocol is not under that licence.** The wire format in
 [`protocol/SPECIFICATION.md`](protocol/SPECIFICATION.md) is
 [CC BY 4.0](protocol/LICENSE), and implementing it needs no permission from
